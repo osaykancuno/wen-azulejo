@@ -15,8 +15,8 @@ original to THE WALL ARCADE (NFC Summit).
 
 WEN AZULEJO (src/games/wen-azulejo/, src/verifiers/wen-azulejo.ts, src/entries/wen-azulejo.ts,
 tests/wen-azulejo.test.ts, scripts/wen-azulejo-config.ts, PUBBLICA.cmd, PUBBLICA.ps1): game rules, art direction and
-simulation by osaykancuno (K4NCUN0 on the wall), built on THE WALL ARCADE's code above, same MIT license. The azulejo
-motifs, street signs and calçada are drawn procedurally in code: no image is copied.
+simulation by osaykancuno (K4NCUN0 on the wall), built on THE WALL ARCADE's code above, same MIT license. The azulejos,
+rosettes, street signs and calçada are drawn procedurally in code: no image is copied.
 
 Runtime dependency @rareprotocol/connect is distributed under MIT.
 Other dependencies retain their own package license notices in node_modules.

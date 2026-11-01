@@ -1,4 +1,4 @@
-// WEN AZULEJO: the rules (core.ts), the page's schemas (engine.ts) and the BUILT verifier, as Studio receives it.
+// WEN AZULEJO · ROSÁCEA: the rules (core.ts), the page's schemas (engine.ts) and the BUILT verifier, as Studio receives it.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { strFromU8, unzipSync, zipSync } from 'fflate';
@@ -6,7 +6,7 @@ import { packageGame } from '../scripts/package-game.js';
 import { scoringConfiguration, type Configuration } from '../src/shell/config.js';
 import { WALL_PANELS } from '../src/generated/wall.js';
 import {
-  CELLS, COLS, MOTIFS, RULES, adjacent, checkState, createEngine, inputSchema, neighbours, parseInput, stateSchema,
+  CELLS, COLORS, COLS, RULES, VCOLS, VERTS, checkState, cornersOf, createEngine, inputSchema, parseInput, stateSchema, turned, verticesOf,
   type AzState, type Tile,
 } from '../src/games/wen-azulejo/engine.js';
 import { mulberry32 } from '../src/common/det.js';
@@ -15,41 +15,51 @@ import { Coordinator, loadBuiltVerifier } from './helpers/coordinator.js';
 const CONFIG = scoringConfiguration('wen-azulejo');
 const engine = createEngine(WALL_PANELS);
 const OPEN = RULES.countdownTicks;
-const PHASE2 = OPEN + 2 * RULES.phaseTicks;                // need 4 from here
+const NAMED = WALL_PANELS.slice(0, 4).map((p) => p.p);
 const started = (seed: number): AzState => engine.applyInput(engine.createRun(seed, CONFIG), { action: 'start' }, 0);
-/** A run at `tick` with exactly these fragments on the wall and no more arrivals. */
-function scene(tiles: Partial<Tile>[], tick = OPEN, seed = 1): AzState {
-  const s = engine.advance(started(seed), OPEN);          // the wall opens empty; the clock is then set to `tick`
-  return { ...s, tick, play: { ...s.play, nextSpawn: 1_000_000, nextId: 100, tiles: tiles.map((t, i) => ({
-    id: i + 1, cell: i, motif: 0, panel: 0, born: tick, dies: tick + 200, ...t })) } };
+/** A tile whose corners never close a junction with others like it: its four corners at a junction read 2, 0, 0, 1. */
+const NEUTRAL = [0, 1, 2, 0];
+/** A run at the opening of the wall with a neutral wall (ids 1-42) changed by `edit`, and no tile coming loose. */
+function scene(edit: (tiles: Tile[]) => void = () => {}, seed = 1): AzState {
+  const s = engine.advance(started(seed), OPEN);
+  const tiles = Array.from({ length: CELLS }, (_, i): Tile => ({ id: i + 1, c: NEUTRAL.slice(), panel: 0, turns: 0, loose: 0, at: 0 }));
+  edit(tiles);
+  return { ...s, play: { ...s.play, tiles, nextId: 100, nextLoose: 1_000_000 } };
 }
-const join = (s: AzState, cells: number[], tick = s.tick): AzState => engine.applyInput(s, { action: 'join', cells }, tick);
+/** Sets junction `v` one turn away from a rosette of `color`: three corners in that colour, the fourth on `turner`'s
+ *  previous corner (one clockwise turn brings it in). Returns the turner's slot. */
+function almost(tiles: Tile[], v: number, color: number, which = 2): number {
+  const corners = cornersOf(v);
+  corners.forEach(([cell, k], i) => {
+    const t = tiles[cell] as Tile;
+    if (i === which) t.c[(k + 3) % 4] = color; else t.c[k] = color;
+  });
+  return (corners[which] as [number, number])[0];
+}
+const turn = (s: AzState, cell: number, tick = s.tick): AzState => engine.applyInput(s, { action: 'turn', cell, id: (s.play.tiles[cell] as Tile).id }, tick);
 const whats = (s: AzState): string[] => s.play.events.map((e) => e.what);
-const at = (col: number, row: number): number => row * COLS + col;
-const NAMED = WALL_PANELS.slice(0, 3).map((p) => p.p);
 
 test('the scoring config: 3 s of countdown + 90 s of play, with room to start; the rule tables agree', () => {
   assert.deepEqual(CONFIG, { game: 'wen-azulejo', maxTicks: 2160, roundTicks: 1860 });
   assert.equal(CONFIG.roundTicks, RULES.countdownTicks + RULES.playTicks);
-  const phases = RULES.motifs.length;
-  assert.equal(RULES.playTicks, phases * RULES.phaseTicks);
-  for (const table of [RULES.need, RULES.groupMin, RULES.groupMax]) assert.equal(table.length, phases);
-  for (let p = 0; p < phases; p++) {
-    assert.ok((RULES.motifs[p] as number) <= MOTIFS.length && (RULES.need[p] as number) <= RULES.maxChain);
-    assert.ok((RULES.groupMin[p] as number) <= (RULES.groupMax[p] as number));
-    if (p) assert.ok((RULES.motifs[p] as number) >= (RULES.motifs[p - 1] as number) && (RULES.need[p] as number) >= (RULES.need[p - 1] as number), 'never easier');
-  }
-  assert.ok(RULES.lifeEnd < RULES.lifeStart && RULES.intervalEnd < RULES.intervalStart);
+  assert.equal(RULES.playTicks, RULES.colors.length * RULES.phaseTicks);
+  RULES.colors.forEach((k, p) => { assert.ok(k >= 2 && k <= COLORS.length); if (p) assert.ok(k >= (RULES.colors[p - 1] as number), 'never easier'); });
+  assert.ok(RULES.looseEnd < RULES.looseStart && RULES.graceEnd < RULES.graceStart);
 });
 
-test('geometry: neighbours are the up-to-8 touching slots, adjacency is symmetric and never a slot with itself', () => {
-  assert.deepEqual(neighbours(0), [1, COLS, COLS + 1]);
-  assert.equal(neighbours(at(2, 3)).length, 8);
-  for (let a = 0; a < CELLS; a++) for (let b = 0; b < CELLS; b++) {
-    assert.equal(adjacent(a, b), adjacent(b, a));
-    assert.equal(adjacent(a, b), neighbours(a).includes(b));
+test('geometry: a junction is the meeting of four corners; a quarter turn is clockwise and four make a full circle', () => {
+  assert.equal(VERTS, 30);
+  for (let v = 0; v < VERTS; v++) {
+    const vx = (v % VCOLS) + 1, vy = Math.floor(v / VCOLS) + 1;          // the junction, in tile units
+    for (const [cell, k] of cornersOf(v)) {
+      const cx = (cell % COLS) + (k === 1 || k === 2 ? 1 : 0), cy = Math.floor(cell / COLS) + (k >= 2 ? 1 : 0);
+      assert.deepEqual([cx, cy], [vx, vy], `junction ${v}, slot ${cell}, corner ${k}`);
+      assert.ok(verticesOf(cell).includes(v));
+    }
   }
-  assert.equal(adjacent(at(5, 0), at(0, 1)), false, 'no wrap from the end of a row to the next');
+  assert.deepEqual(verticesOf(0), [0]); assert.equal(verticesOf(COLS + 1).length, 4);
+  assert.deepEqual(turned([1, 2, 3, 4]), [4, 1, 2, 3], 'the top-left corner takes the bottom-left glaze');
+  assert.deepEqual(turned(turned(turned(turned([1, 2, 3, 4])))), [1, 2, 3, 4]);
 });
 
 test('createRun validates its seed and config; same seed and inputs, same wall', () => {
@@ -59,7 +69,6 @@ test('createRun validates its seed and config; same seed and inputs, same wall',
   assert.throws(() => engine.createRun(1, { ...CONFIG, roundTicks: RULES.countdownTicks }));
   const a = engine.advance(started(42), 400), b = engine.advance(started(42), 400), c = engine.advance(started(43), 400);
   assert.deepEqual(a, b); assert.notDeepEqual(a.play.tiles, c.play.tiles);
-  assert.ok(a.play.tiles.length > 0 || a.play.events.length > 0, 'fragments arrive');
   assert.deepEqual(JSON.parse(JSON.stringify(a)), a, 'the state round-trips through JSON');
   let stepped = started(42); for (let t = 1; t <= 400; t += 7) stepped = engine.advance(stepped, t);
   assert.deepEqual(engine.advance(stepped, 400), a, 'many small advances = one big advance');
@@ -67,168 +76,173 @@ test('createRun validates its seed and config; same seed and inputs, same wall',
   assert.throws(() => engine.applyInput(a, { action: 'start' }, 12.5));
 });
 
-test('arrivals: nothing in the countdown; linked groups of one motif in play; free, cooled slots; each name once', () => {
-  assert.equal(engine.advance(started(5), OPEN).play.tiles.length, 0, 'the countdown is empty');
-  const motifsSeen = new Set<number>();
-  let named = 0;
-  for (let seed = 1; seed <= 25; seed++) {
-    let run = started(seed), before = new Map<number, Tile>();
-    for (let t = OPEN + 1; t < CONFIG.roundTicks - 10; t++) {
-      run = engine.advance(run, t);
-      if (run.gameOver) break;
-      run = { ...run, play: { ...run.play, cracks: 0 } };            // keep the wall up to watch the whole run
-      const fresh = run.play.tiles.filter((x) => !before.has(x.id));
-      if (fresh.length) {
-        const phase = engine.phaseAt(run, t);
-        assert.ok(fresh.length >= (RULES.groupMin[phase] as number) - 2 && fresh.length <= (RULES.groupMax[phase] as number), `group of ${fresh.length}`);
-        assert.equal(new Set(fresh.map((x) => x.motif)).size, 1, 'one motif per group');
-        assert.ok(fresh.every((x) => x.motif < engine.motifsAt(run, t)), 'only the motifs of the phase');
-        for (let i = 1; i < fresh.length; i++) assert.ok(adjacent((fresh[i - 1] as Tile).cell, (fresh[i] as Tile).cell), 'a group can be linked');
-        assert.ok(fresh.filter((x) => x.panel).length <= 1);
-        for (const x of fresh) { motifsSeen.add(x.motif); assert.equal(x.dies - x.born, engine.lifeAt(run, t)); }
-      }
-      assert.equal(new Set(run.play.tiles.map((x) => x.cell)).size, run.play.tiles.length, 'one fragment per slot');
-      const panels = run.play.tiles.filter((x) => x.panel).map((x) => x.panel);
-      assert.equal(new Set(panels).size, panels.length, 'a name is on the wall once at most');
-      named += fresh.filter((x) => x.panel).length;
-      before = new Map(run.play.tiles.map((x) => [x.id, x]));
-    }
-  }
-  assert.equal(motifsSeen.size, MOTIFS.length, 'every motif shows up');
-  assert.ok(named > 100, `names arrive (${named})`);
-});
-
-test('the pace ramps evenly from the first second to the last; the motifs grow every phase', () => {
-  const s = started(1), open = engine.openTickOf(s);
-  assert.equal(engine.lifeAt(s, open), RULES.lifeStart); assert.equal(engine.lifeAt(s, open + RULES.playTicks), RULES.lifeEnd);
-  assert.equal(engine.intervalAt(s, open), RULES.intervalStart); assert.equal(engine.intervalAt(s, open + RULES.playTicks), RULES.intervalEnd);
-  for (let t = open + 1; t <= open + RULES.playTicks; t++) {
-    const dl = engine.lifeAt(s, t - 1) - engine.lifeAt(s, t), di = engine.intervalAt(s, t - 1) - engine.intervalAt(s, t);
-    assert.ok(dl === 0 || dl === 1, 'life: one tick at most per tick'); assert.ok(di === 0 || di === 1);
-  }
-  assert.deepEqual([0, 1, 2, 3].map((p) => engine.needAt(s, open + p * RULES.phaseTicks)), RULES.need);
-  assert.deepEqual([0, 1, 2, 3].map((p) => engine.motifsAt(s, open + p * RULES.phaseTicks + 5)), RULES.motifs);
-});
-
-test('a chain of one motif completes an azulejo: points × multiplier, slots cleared and cooled, the pattern grows', () => {
-  let s = scene([{ cell: at(0, 0) }, { cell: at(1, 1) }, { cell: at(2, 1) }, { cell: at(4, 4), motif: 1 }]);
-  s = join(s, [at(0, 0), at(1, 1), at(2, 1)], OPEN + 1);
-  assert.deepEqual(whats(s), ['made']);
-  assert.equal(s.play.score, engine.valueOf(3, 3)); assert.equal(s.play.score, 150);
-  assert.equal(s.play.made, 1); assert.equal(s.play.combo, 1); assert.deepEqual(s.play.mosaic, [0]);
-  assert.deepEqual(s.play.tiles.map((t) => t.cell), [at(4, 4)]);
-  assert.equal(s.play.cool[at(1, 1)], OPEN + 1 + RULES.cooldown);
-  // longer chains score more than their length: 4 of a kind when 3 make one
-  const long = join(scene([0, 1, 2, 3].map((c) => ({ cell: c }))), [0, 1, 2, 3], OPEN + 1);
-  assert.equal(long.play.score, RULES.perFragment * 4 + RULES.longBonus);
-});
-
-test('azulejos in a row multiply (×2 from the 4th), and the streak ends after 3 s without one', () => {
-  const tiles: Partial<Tile>[] = [];
-  for (let k = 0; k < 6; k++) for (let c = 0; c < 3; c++) tiles.push({ cell: at(c, k), motif: k % 3 });
-  let s = scene(tiles), t = OPEN;
-  const gains: number[] = [];
-  for (let k = 0; k < 5; k++) { t += 10; const before = s.play.score; s = join(s, [at(0, k), at(1, k), at(2, k)], t); gains.push(s.play.score - before); }
-  assert.deepEqual(gains, [150, 150, 150, 300, 300]);
-  assert.equal(s.play.combo, 5); assert.equal(s.play.bestCombo, 5);
-  s = engine.advance(s, t + RULES.comboWindow + 1);
-  assert.equal(s.play.combo, 0, 'too slow: the streak is over');
-  const before = s.play.score;
-  s = join(s, [at(0, 5), at(1, 5), at(2, 5)], t + RULES.comboWindow + 2);
-  assert.equal(s.play.score - before, 150); assert.equal(s.play.bestCombo, 5);
-});
-
-test('a golden fragment paints its name on the wall: a bonus, a crack repaired, each name once', () => {
-  let s = scene([{ cell: 0, panel: NAMED[0] }, { cell: 1 }, { cell: 2, panel: NAMED[1] }]);
-  s = { ...s, play: { ...s.play, cracks: 3 } };
-  s = join(s, [0, 1, 2], OPEN + 1);
-  assert.equal(s.play.score, 150 + 2 * RULES.painted);
-  assert.deepEqual(s.play.painted, [NAMED[0], NAMED[1]]); assert.equal(s.play.cracks, 1);
-  assert.deepEqual(s.play.events.at(-1)?.panels, [NAMED[0], NAMED[1]]);
-  // a painted name never comes back
-  let run = started(8);
-  run = { ...run, play: { ...run.play, painted: engine.pool.slice(0, engine.pool.length - 2) } };
-  for (let t = OPEN; t < OPEN + 900; t += 3) {
-    run = engine.advance({ ...run, play: { ...run.play, cracks: 0 } }, t);
-    for (const x of run.play.tiles) assert.ok(x.panel === 0 || !run.play.painted.includes(x.panel));
+test('the opening wall: 42 tiles laid, in the first glazes, with no rosette closed', () => {
+  for (let seed = 0; seed < 200; seed++) {
+    const s = engine.createRun(seed, CONFIG);
+    assert.equal(s.play.tiles.length, CELLS);
+    assert.ok(s.play.tiles.every((t) => t.at === 0 && t.turns === 0 && t.loose === 0 && t.c.every((x) => x < (RULES.colors[0] as number))));
+    for (let v = 0; v < VERTS; v++) assert.equal(engine.closedAt(s.play, v, 0), -1, `seed ${seed}: junction ${v} closed at the start`);
   }
 });
 
-test('errors: mixed motifs, a skipped slot or a chain too short cracks the wall, costs points and the streak, keeps the fragments', () => {
-  const base = scene([{ cell: 0 }, { cell: 1 }, { cell: 2, motif: 1 }, { cell: 3 }, { cell: 4 }]);
-  const rich = { ...base, play: { ...base.play, score: 500, combo: 2, bestCombo: 2, lastMade: OPEN } };
-  for (const cells of [[0, 1, 2], [1, 0, 3], [3, 4]]) {
-    const s = join(rich, cells, OPEN + 1);
-    assert.deepEqual(whats(s), ['error'], JSON.stringify(cells));
-    assert.equal(s.play.score, 500 - RULES.errorPenalty); assert.equal(s.play.cracks, 1); assert.equal(s.play.combo, 0);
-    assert.equal(s.play.errors, 1); assert.equal(s.play.tiles.length, 5, 'nothing leaves the wall');
-  }
-  // too short once the azulejos need 4
-  const late = scene([{ cell: 0 }, { cell: 1 }, { cell: 2 }, { cell: 3 }], PHASE2);
-  assert.deepEqual(whats(join(late, [0, 1, 2])), ['error']);
-  assert.deepEqual(whats(join(late, [0, 1, 2, 3])), ['made']);
+test('a tap turns the tile a quarter clockwise; the fourth turn that closes nothing cracks it', () => {
+  let s = scene();
+  s = { ...s, play: { ...s.play, score: 500, combo: 2, bestCombo: 2, lastMade: OPEN } };
+  const cell = 14, id = (s.play.tiles[cell] as Tile).id;
+  s = turn(s, cell, OPEN + 1);
+  assert.deepEqual(s.play.tiles[cell]?.c, turned(NEUTRAL)); assert.equal(s.play.tiles[cell]?.turns, 1);
+  s = turn(turn(s, cell, OPEN + 2), cell, OPEN + 3);
+  assert.equal(s.play.tiles[cell]?.turns, RULES.maxTurns); assert.equal(s.play.events.length, 0);
+  s = turn(s, cell, OPEN + 4);
+  assert.deepEqual(whats(s), ['spin']);
+  assert.equal(s.play.score, 500 - RULES.spinPenalty); assert.equal(s.play.cracks, 1); assert.equal(s.play.combo, 0); assert.equal(s.play.spun, 1);
+  const fresh = s.play.tiles[cell] as Tile;
+  assert.notEqual(fresh.id, id, 'a new tile'); assert.equal(fresh.at, OPEN + 4 + RULES.refillTicks); assert.equal(fresh.turns, 0);
   // the score never goes below zero
-  const poor = join(scene([{ cell: 0 }, { cell: 1, motif: 2 }]), [0, 1]);
+  let poor = scene();
+  for (let k = 0; k <= RULES.maxTurns; k++) poor = turn(poor, 3, OPEN + 1 + k);
   assert.equal(poor.play.score, 0); assert.equal(poor.play.events.at(-1)?.gain, 0);
 });
 
-test('latency: a chain through a slot that emptied a moment ago does nothing (no points, no crack)', () => {
-  let s = scene([{ cell: 0, dies: OPEN + 5 }, { cell: 1 }, { cell: 2 }]);
-  s = engine.advance(s, OPEN + 5);
-  assert.deepEqual(whats(s), ['fall']);
-  const after = join(s, [0, 1, 2], OPEN + 8);
-  assert.deepEqual(after.play, engine.advance(s, OPEN + 8).play);
-  // and the emptied slot stays empty long enough for any chain in flight
-  let run = started(3);
-  for (let t = OPEN; t < OPEN + 600; t++) {
-    const next = engine.advance(run, t);
-    for (const x of next.play.tiles) if (!run.play.tiles.some((y) => y.id === x.id)) assert.ok((run.play.cool[x.cell] as number) <= t);
-    run = { ...next, play: { ...next.play, cracks: 0 } };
+test('a turn that closes four corners of one colour makes a rosette: points, tiles relaid half a second later', () => {
+  let cellT = -1;
+  let s = scene((t) => { cellT = almost(t, 6, 3); });
+  const before = s.play.tiles.map((t) => t.id);
+  s = turn(s, cellT, OPEN + 1);
+  assert.deepEqual(whats(s), ['rosette']);
+  const e = s.play.events[0];
+  assert.equal(e?.vertex, 6); assert.equal(e?.color, 3); assert.deepEqual([...(e?.cells ?? [])].sort((a, b) => a - b), cornersOf(6).map(([c]) => c).sort((a, b) => a - b));
+  assert.equal(s.play.score, RULES.rosette); assert.equal(s.play.made, 1); assert.deepEqual(s.play.mosaic, [3]); assert.equal(s.play.combo, 1);
+  for (const [cell] of cornersOf(6)) {
+    const t = s.play.tiles[cell] as Tile;
+    assert.ok(!before.includes(t.id), 'relaid'); assert.equal(t.at, OPEN + 1 + RULES.refillTicks);
+    assert.ok(t.c.every((x) => x < engine.colorsAt(s, t.at)));
   }
+  assert.equal(s.play.tiles.filter((t, i) => t.id === before[i]).length, CELLS - 4, 'the rest of the wall stays');
+  // one turn can close two rosettes at once (the turning tile is in both)
+  // junction 6 (slots 7, 8, 14, 13) and junction 7 (slots 8, 9, 15, 14) share slot 14: its bottom-left glaze turns into
+  // its top-left corner (junction 6) and its top-left glaze into its top-right corner (junction 7)
+  const two = scene((t) => {
+    assert.equal(almost(t, 6, 3, 2), 14);
+    t[14]!.c[0] = 4;
+    for (const [cell, k] of cornersOf(7)) if (cell !== 14) t[cell]!.c[k] = 4;
+  });
+  const after = turn(two, 14, OPEN + 1);
+  assert.deepEqual(whats(after), ['rosette', 'rosette']);
+  assert.equal(after.play.score, RULES.rosette * 2); assert.deepEqual(after.play.mosaic, [3, 4]);
 });
 
-test('a fragment left too long falls: a crack and a penalty; twelve cracks end the run without a bonus', () => {
-  let s = scene([{ cell: 7, dies: OPEN + 3 }]);
-  s = { ...s, play: { ...s.play, score: 100 } };
+test('rosettes in a row multiply (×2 from the 4th), and the streak ends after 3 s without one', () => {
+  const setups: number[] = [];
+  const junctions = [0, 2, 4, 10, 12, 14];
+  let s = scene((t) => { for (const v of junctions) setups.push(almost(t, v, 3)); });
+  const gains: number[] = [];
+  let tick = OPEN;
+  for (let i = 0; i < 5; i++) { tick += 10; const before = s.play.score; s = turn(s, setups[i] as number, tick); gains.push(s.play.score - before); }
+  assert.deepEqual(gains, [100, 100, 100, 200, 200]);
+  assert.equal(s.play.bestCombo, 5);
+  s = engine.advance(s, tick + RULES.comboWindow + 1);
+  assert.equal(s.play.combo, 0, 'too slow: the streak is over');
+  const before = s.play.score;
+  s = turn(s, setups[5] as number, tick + RULES.comboWindow + 2);
+  assert.equal(s.play.score - before, 100);
+});
+
+test('golden tiles paint their name (bonus, a crack repaired); a loose tile saved by a rosette pays, one not saved falls', () => {
+  let cellT = -1;
+  let s = scene((t) => {
+    cellT = almost(t, 8, 4);
+    const [a, b] = cornersOf(8);
+    t[(a as [number, number])[0]]!.panel = NAMED[0] as number;
+    t[(b as [number, number])[0]]!.loose = OPEN + 50;
+  });
+  s = { ...s, play: { ...s.play, cracks: 3 } };
+  s = turn(s, cellT, OPEN + 1);
+  assert.equal(s.play.score, RULES.rosette + RULES.painted + RULES.rescued);
+  assert.deepEqual(s.play.painted, [NAMED[0]]); assert.equal(s.play.cracks, 2); assert.equal(s.play.rescued, 1);
+  assert.deepEqual(s.play.events.at(-1)?.panels, [NAMED[0]]);
+  assert.ok(s.play.tiles.every((t) => t.panel !== NAMED[0]), 'a painted name leaves the wall');
+  // not saved: it falls at its tick, cracks the wall and is relaid
+  let f = scene((t) => { t[20]!.loose = OPEN + 5; });
+  f = { ...f, play: { ...f.play, score: 100 } };
+  f = engine.advance(f, OPEN + 4);
+  assert.equal(f.play.events.length, 0);
+  f = engine.advance(f, OPEN + 5);
+  assert.deepEqual(whats(f), ['fall']); assert.equal(f.play.cracks, 1); assert.equal(f.play.score, 100 - RULES.fallPenalty); assert.equal(f.play.fallen, 1);
+  assert.equal(f.play.tiles[20]?.at, OPEN + 5 + RULES.refillTicks); assert.equal(f.play.tiles[20]?.loose, 0);
+});
+
+test('SOS: tiles come loose from the opening on, more and more often, with less and less time; a painted name never comes back', () => {
+  const s = started(1), open = engine.openTickOf(s);
+  assert.equal(engine.looseAt(s, open), RULES.looseStart); assert.equal(engine.looseAt(s, open + RULES.playTicks), RULES.looseEnd);
+  assert.equal(engine.graceAt(s, open), RULES.graceStart); assert.equal(engine.graceAt(s, open + RULES.playTicks), RULES.graceEnd);
+  for (let t = open + 1; t <= open + RULES.playTicks; t++) {
+    assert.ok(engine.looseAt(s, t - 1) - engine.looseAt(s, t) <= 1); assert.ok(engine.graceAt(s, t - 1) - engine.graceAt(s, t) <= 1);
+  }
+  assert.ok(engine.advance(s, open).play.tiles.every((t) => t.loose === 0), 'nothing loose in the countdown');
+  let run = { ...s, play: { ...s.play, painted: engine.pool.slice(0, engine.pool.length - 3) } };
+  let loose = 0, maxNames = 0;
+  for (let t = open; t < open + RULES.playTicks; t += 2) {
+    run = engine.advance({ ...run, play: { ...run.play, cracks: 0 } }, t);
+    loose = Math.max(loose, run.play.looseCount);
+    const names = run.play.tiles.filter((x) => x.panel).map((x) => x.panel);
+    maxNames = Math.max(maxNames, names.length);
+    assert.ok(names.every((n) => !run.play.painted.includes(n)));
+  }
+  assert.ok(loose > 40, `${loose} tiles came loose`); assert.ok(maxNames <= RULES.namesMax);
+});
+
+test('a cascade: a new tile laid into place closes a rosette by itself, and counts', () => {
+  let s = scene((t) => {
+    for (const [cell, k] of cornersOf(20)) t[cell]!.c[k] = 4;
+    const [cell] = cornersOf(20)[3] as [number, number];
+    t[cell]!.at = OPEN + 3;                             // still being laid
+  });
+  assert.equal(engine.closedAt(s.play, 20, OPEN), -1, 'not yet: one slot is empty');
   s = engine.advance(s, OPEN + 3);
-  assert.deepEqual(whats(s), ['fall']); assert.equal(s.play.cracks, 1); assert.equal(s.play.score, 100 - RULES.fallPenalty);
-  assert.equal(s.play.fallen, 1); assert.equal(s.play.tiles.length, 0); assert.equal(s.play.cool[7], OPEN + 3 + RULES.cooldown);
+  assert.deepEqual(whats(s), ['cascade']); assert.equal(s.play.cascades, 1); assert.equal(s.play.score, RULES.rosette);
+});
+
+test('latency: a tap on a tile that left its slot (or is not laid yet) does nothing', () => {
+  const s = scene((t) => { t[5]!.at = OPEN + 4; });
+  assert.deepEqual(engine.applyInput(s, { action: 'turn', cell: 3, id: 999 }, OPEN + 1).play, engine.advance(s, OPEN + 1).play, 'another tile now');
+  assert.deepEqual(engine.applyInput(s, { action: 'turn', cell: 5, id: 6 }, OPEN + 1).play, engine.advance(s, OPEN + 1).play, 'not laid yet');
+  assert.notDeepEqual(engine.applyInput(s, { action: 'turn', cell: 5, id: 6 }, OPEN + 4).play.tiles[5]?.c, NEUTRAL, 'laid: it turns');
+});
+
+test('twelve cracks end the run without a bonus; holding the wall 90 s pays it; a finished run never changes', () => {
   const idle = engine.advance(started(9), CONFIG.roundTicks);
   assert.equal(idle.gameOver, true); assert.equal(idle.play.end, 'cracked'); assert.equal(idle.play.cracks, RULES.maxCracks);
-  assert.equal(idle.play.bonus, 0); assert.ok(idle.tick < CONFIG.roundTicks, 'an idle wall crumbles long before the end');
-  assert.equal(idle.play.tiles.length, 0);
-});
-
-test('holding the wall for 90 s pays the survival bonus; a finished run never changes', () => {
+  assert.equal(idle.play.bonus, 0); assert.ok(idle.tick < CONFIG.roundTicks, 'an idle wall crumbles before the end');
   const bot = playBot(77);
   assert.equal(bot.play.end, 'time', `the bot holds the wall (${bot.play.cracks} cracks)`);
   assert.equal(bot.play.bonus, RULES.survival + RULES.perCrackLeft * (RULES.maxCracks - bot.play.cracks));
-  assert.ok(bot.play.made > 30 && bot.play.painted.length > 5, `made ${bot.play.made}, painted ${bot.play.painted.length}`);
-  console.log(`  wen-azulejo bot (seed 77): score ${bot.play.score}, made ${bot.play.made}, painted ${bot.play.painted.length}, fallen ${bot.play.fallen}, cracks ${bot.play.cracks}, best combo ${bot.play.bestCombo}`);
-  assert.ok(JSON.stringify(bot).length < 8192);
-  assert.deepEqual(engine.applyInput(bot, { action: 'join', cells: [0, 1, 2] }, bot.tick + 1), bot);
+  assert.ok(bot.play.made > 40 && bot.play.rescued > 10, `made ${bot.play.made}, rescued ${bot.play.rescued}`);
+  console.log(`  wen-azulejo bot (seed 77): score ${bot.play.score}, rosettes ${bot.play.made} (cascades ${bot.play.cascades}), saved ${bot.play.rescued}, fallen ${bot.play.fallen}, painted ${bot.play.painted.length}, cracks ${bot.play.cracks}, best combo ${bot.play.bestCombo}`);
+  assert.ok(JSON.stringify(bot).length < 12_000);
+  assert.deepEqual(engine.applyInput(bot, { action: 'turn', cell: 0, id: (bot.play.tiles[0] as Tile).id }, bot.tick + 1), bot);
   assert.deepEqual(engine.advance(bot, CONFIG.maxTicks), bot);
 });
 
-test('start: chains before the start or in the countdown are no-ops; a second start does not move the clock', () => {
+test('start: taps before the start or in the countdown are no-ops; a second start does not move the clock', () => {
   const fresh = engine.createRun(3, CONFIG);
-  assert.deepEqual(join(fresh, [0, 1, 2], 2).play, fresh.play);
+  assert.deepEqual(engine.applyInput(fresh, { action: 'turn', cell: 0, id: 1 }, 2).play, fresh.play);
   const s = started(3);
-  assert.deepEqual(join(s, [0, 1, 2], OPEN - 1).play, engine.advance(s, OPEN - 1).play);
+  assert.deepEqual(engine.applyInput(s, { action: 'turn', cell: 0, id: 1 }, OPEN - 1).play, engine.advance(s, OPEN - 1).play);
   assert.equal(engine.applyInput(s, { action: 'start' }, 30).startTick, 0);
-  // an input after the end changes nothing
   const over = engine.advance(s, CONFIG.maxTicks);
   assert.deepEqual(engine.applyInput(over, { action: 'start' }, CONFIG.maxTicks), over);
 });
 
-test('forged inputs never score, crack or change anything', () => {
-  const s = scene([{ cell: 0 }, { cell: 1 }, { cell: 2 }]);
+test('forged inputs never score, crack or turn anything', () => {
+  let cellT = -1;
+  const s = scene((t) => { cellT = almost(t, 6, 3); });
+  const id = (s.play.tiles[cellT] as Tile).id;
   const forged: unknown[] = [
-    { action: 'join', cells: [0, 1, 2], score: 9999 }, { action: 'join', cells: [0, 1, 1] }, { action: 'join', cells: [0] }, { action: 'join', cells: [] },
-    { action: 'join', cells: [0, 1, 2, 3, 4, 5, 6] }, { action: 'join', cells: [0, 1, CELLS] }, { action: 'join', cells: [0, 1, -1] },
-    { action: 'join', cells: [0, 1, 2.5] }, { action: 'join', cells: ['0', '1', '2'] }, { action: 'join', cells: '0,1,2' }, { action: 'join' },
-    { action: 'join', cells: { 0: 0, 1: 1, 2: 2 } }, { action: 'paint', cells: [0, 1, 2] }, { action: 'slam', lane: 0 }, { action: 'start', x: 1 },
-    { cells: [0, 1, 2] }, null, 7, 'join', [], { score: 1e9 }, { action: 'join', cells: [0, 1, 2], tick: 0 },
+    { action: 'turn', cell: cellT, id, score: 9999 }, { action: 'turn', cell: cellT }, { action: 'turn', id }, { action: 'turn', cell: CELLS, id },
+    { action: 'turn', cell: -1, id }, { action: 'turn', cell: 1.5, id }, { action: 'turn', cell: String(cellT), id }, { action: 'turn', cell: cellT, id: 0 },
+    { action: 'turn', cell: cellT, id: 2_000_000 }, { action: 'turn', cell: cellT, id, times: 3 }, { action: 'rosette', vertex: 6 },
+    { action: 'join', cells: [0, 1, 2] }, { action: 'slam', lane: 0 }, { action: 'start', x: 1 }, { cell: cellT, id }, null, 7, 'turn', [], { score: 1e9 },
   ];
   for (const input of forged) {
     const after = engine.applyInput(s, input, OPEN + 1);
@@ -236,27 +250,29 @@ test('forged inputs never score, crack or change anything', () => {
     assert.equal(parseInput(input), null);
     assert.equal(inputSchema.safeParse(input).success, false, 'the page refuses what the verifier refuses');
   }
-  assert.ok(inputSchema.safeParse({ action: 'join', cells: [0, 1, 2] }).success);
+  assert.ok(inputSchema.safeParse({ action: 'turn', cell: cellT, id }).success);
 });
 
 test('checkState and the page schema refuse incoherent or tampered states (and agree)', () => {
   const s = engine.advance(started(4), 300);
-  assert.ok(s.play.tiles.length > 1);
+  assert.ok(s.play.tiles.some((t) => t.loose > 0));
   assert.deepEqual(checkState(s), s); assert.equal(stateSchema.safeParse(s).success, true);
   const mutate = (f: (x: any) => void): unknown => { const c = structuredClone(s) as any; f(c); return c; };
   const bad = [
     mutate((x) => { x.extra = 1; }), mutate((x) => { x.play.extra = 1; }), mutate((x) => { x.play.score = -1; }), mutate((x) => { x.play.score = 1.5; }),
-    mutate((x) => { x.play.cracks = RULES.maxCracks + 1; }), mutate((x) => { x.play.cracks = RULES.maxCracks; }), mutate((x) => { x.play.cool = [0, 0]; }),
-    mutate((x) => { x.play.tiles[0].cell = CELLS; }), mutate((x) => { x.play.tiles[0].motif = MOTIFS.length; }), mutate((x) => { x.play.tiles[0].extra = 1; }),
-    mutate((x) => { x.play.tiles[1].cell = x.play.tiles[0].cell; }), mutate((x) => { x.play.tiles.push({ ...x.play.tiles[0], cell: 41 }); }),
-    mutate((x) => { x.play.tiles[0].id = x.play.nextId; }), mutate((x) => { x.play.tiles = Array(CELLS + 1).fill(x.play.tiles[0]); }),
-    mutate((x) => { x.play.tiles[0].dies = x.tick; }), mutate((x) => { x.play.tiles[0].dies = x.play.tiles[0].born + RULES.lifeStart + 1; }),
-    mutate((x) => { x.play.tiles[0].panel = 551; }), mutate((x) => { x.play.tiles[0].panel = 7; x.play.painted = [7]; }),
-    mutate((x) => { x.play.tiles[0].panel = 7; x.play.tiles[1].panel = 7; }),
+    mutate((x) => { x.play.cracks = RULES.maxCracks + 1; }), mutate((x) => { x.play.cracks = RULES.maxCracks; }),
+    mutate((x) => { x.play.tiles.pop(); }), mutate((x) => { x.play.tiles.push(x.play.tiles[0]); }),
+    mutate((x) => { x.play.tiles[0].c = [0, 1, 2]; }), mutate((x) => { x.play.tiles[0].c = [0, 1, 2, COLORS.length]; }), mutate((x) => { x.play.tiles[0].extra = 1; }),
+    mutate((x) => { x.play.tiles[1].id = x.play.tiles[0].id; }), mutate((x) => { x.play.tiles[0].id = x.play.nextId; }),
+    mutate((x) => { x.play.tiles[0].turns = RULES.maxTurns + 1; }), mutate((x) => { x.play.tiles[0].at = x.tick + RULES.refillTicks + 1; }),
+    mutate((x) => { x.play.tiles[0].loose = x.tick; }), mutate((x) => { x.play.tiles[0].panel = 551; }),
+    mutate((x) => { x.play.tiles[0].panel = 7; x.play.painted = [7]; }), mutate((x) => { x.play.tiles[0].panel = 7; x.play.tiles[1].panel = 7; }),
+    mutate((x) => { for (let i = 0; i <= RULES.namesMax; i++) x.play.tiles[i].panel = 100 + i; }),
     mutate((x) => { x.play.end = 'time'; }), mutate((x) => { x.play.combo = x.play.bestCombo + 1; }), mutate((x) => { x.started = false; }),
     mutate((x) => { x.tick = x.rules.maxTicks + 1; }), mutate((x) => { x.rules.game = 'gate-rush'; }), mutate((x) => { x.seed = -1; }),
-    mutate((x) => { x.play.painted = [3, 3]; }), mutate((x) => { x.play.mosaic = [MOTIFS.length]; }), mutate((x) => { x.play.lastMade = x.tick + 1; }),
-    mutate((x) => { x.play.events = [{ seq: 1, tick: 0, what: 'made', motif: 0, cells: [0, 1, 2], panels: [], gain: 1, extra: 1 }]; }),
+    mutate((x) => { x.play.painted = [3, 3]; }), mutate((x) => { x.play.mosaic = [COLORS.length]; }), mutate((x) => { x.play.lastMade = x.tick + 1; }),
+    mutate((x) => { x.play.events = [{ seq: 1, tick: 0, what: 'rosette', color: 0, vertex: 0, cells: [0, 1, 6, 7], panels: [], gain: 1, extra: 1 }]; x.play.eventSeq = 1; }),
+    mutate((x) => { x.play.events = [{ seq: 1, tick: 0, what: 'rosette', color: 0, vertex: VERTS, cells: [0, 1, 6, 7], panels: [], gain: 1 }]; x.play.eventSeq = 1; }),
   ];
   bad.forEach((state, i) => {
     assert.throws(() => checkState(state), Error, `case ${i}`);
@@ -265,31 +281,37 @@ test('checkState and the page schema refuse incoherent or tampered states (and a
 });
 
 /* ------------------------------------- bot ------------------------------------- */
-/** The best chain on the wall right now (longest up to `want`, names first, fragments closest to falling first). */
-function bestChain(s: AzState, want = RULES.maxChain): number[] | null {
-  const need = engine.needAt(s, s.tick);
-  let best: Tile[] | null = null, bestKey = -Infinity;
-  const tiles = s.play.tiles;
-  const walk = (path: Tile[]): void => {
-    if (path.length >= need) {
-      const key = path.length * 10 + path.filter((t) => t.panel).length * 30 - Math.min(...path.map((t) => t.dies)) / 100;
-      if (key > bestKey) { bestKey = key; best = path; }
+/** Turns to bring glaze `color` to corner k of tile t, or 99. */
+const turnsTo = (t: Tile, k: number, color: number): number => { for (let r = 0; r < 4; r++) if (t.c[(k + 4 - r) % 4] === color) return r; return 99; };
+/** The next tap of a player who sees the whole wall: the cheapest rosette in turns, loose and golden tiles first. */
+function bestTap(s: AzState): { cell: number; id: number } | null {
+  let best: { cost: number; cell: number; id: number } | null = null;
+  for (let v = 0; v < VERTS; v++) {
+    const corners = cornersOf(v), tiles = corners.map(([cell]) => s.play.tiles[cell] as Tile);
+    if (tiles.some((t) => t.at > s.tick)) continue;
+    const priority = tiles.reduce((a, t) => a + (t.loose ? (t.loose - s.tick < 60 ? 40 : 15) : 0) + (t.panel ? 8 : 0), 0);
+    for (let color = 0; color < COLORS.length; color++) {
+      const r = corners.map(([, k], i) => turnsTo(tiles[i] as Tile, k, color));
+      if (r.some((x) => x === 99)) continue;
+      const moving = r.map((x, i) => ({ x, i })).filter((m) => m.x > 0);
+      if (!moving.length) continue;
+      if (!moving.every((m, j) => m.x <= RULES.maxTurns - (tiles[m.i] as Tile).turns + (j === moving.length - 1 ? 1 : 0))) continue;
+      const cost = r.reduce((a, b) => a + b, 0) - priority, m = moving[0] as { i: number };
+      if (!best || cost < best.cost) best = { cost, cell: (corners[m.i] as [number, number])[0], id: (tiles[m.i] as Tile).id };
     }
-    if (path.length >= want) return;
-    const last = path[path.length - 1] as Tile;
-    for (const t of tiles) if (t.motif === last.motif && !path.includes(t) && adjacent(last.cell, t.cell)) walk([...path, t]);
-  };
-  for (const t of tiles) walk([t]);
-  return best ? (best as Tile[]).map((t) => t.cell) : null;
+  }
+  return best ? { cell: best.cell, id: best.id } : null;
 }
-/** A quick player: one chain every 15 ticks (0.75 s), sent 3 ticks after spotting it. */
+/** A quick player: a tap every 4 ticks (0.2 s), a short look after each rosette, taps landing 2 ticks late. */
 function playBot(seed: number): AzState {
-  let s = started(seed), next = 0;
+  let s = started(seed), next = 0, made = 0;
   for (let t = 1; !s.gameOver && t <= CONFIG.maxTicks; t++) {
     s = engine.advance(s, t);
     if (t < next || s.gameOver) continue;
-    const cells = bestChain(s);
-    if (cells) { s = join(s, cells, t + 3); t = s.tick; next = t + 15; }
+    const tap = bestTap(s);
+    if (!tap) continue;
+    s = engine.applyInput(s, { action: 'turn', ...tap }, t + 2); t = s.tick;
+    next = t + 4 + (s.play.made > made ? 8 : 0); made = s.play.made;
   }
   return s;
 }
@@ -338,8 +360,7 @@ test('wen-azulejo: the BUILT verifier answers the conformance probe and rejects 
   assert.equal((await post({ version: 2, op: 'score', state })).status, 400);
   assert.equal((await post({ version: 1, op: 'createRun', seed: 1, config: { ...config, game: 'full-row' } })).status, 400);
   assert.equal((await verifier.fetch(new Request('https://verifier.invalid/v1', { method: 'GET' }))).status, 404);
-  // a forged input through the real envelope: a state unchanged but for the clock
-  const forged = await post({ version: 1, op: 'applyInput', state, input: { action: 'join', cells: [0, 1, 2], score: 1e6 }, serverTick: 1 });
+  const forged = await post({ version: 1, op: 'applyInput', state, input: { action: 'turn', cell: 0, id: 1, score: 1e6 }, serverTick: 1 });
   assert.equal(forged.status, 200);
   assert.deepEqual(((await forged.json()) as { result: AzState }).result.play, state.play);
 });
@@ -360,12 +381,12 @@ test('wen-azulejo: whole runs through the BUILT verifier, called every tick like
     while (!run.state.gameOver && run.tick < (config.maxTicks as number)) {
       await run.advanceTo(run.tick + 1); local = engine.advance(local, run.tick);
       if (run.tick < next) continue;
-      const cells = bestChain(run.state);
-      // a fallible player: sometimes slow, now and then a wrong link, a stale chain, or a forged input
-      const r = rnd();
-      if (cells && r < 0.85) { await send({ action: 'join', cells }, run.tick + 1 + Math.floor(rnd() * 3)); next = run.tick + 12 + Math.floor(rnd() * 10); }
-      else if (r < 0.88 && run.state.play.tiles.length >= 2) { const [a, b] = run.state.play.tiles; await send({ action: 'join', cells: [(a as Tile).cell, (b as Tile).cell] }, run.tick + 1); }
-      else if (r < 0.89) await send({ action: 'join', cells: [0, 1, 2], score: 99999 }, run.tick + 1);
+      const r = rnd(), tap = bestTap(run.state);
+      // a fallible player: slower, a random tap now and then (some over-spin), a stale tap, a forged input
+      if (tap && r < 0.8) { await send({ action: 'turn', ...tap }, run.tick + 1 + Math.floor(rnd() * 3)); next = run.tick + 5 + Math.floor(rnd() * 8); }
+      else if (r < 0.9) { const cell = Math.floor(rnd() * CELLS); await send({ action: 'turn', cell, id: (run.state.play.tiles[cell] as Tile).id }, run.tick + 1); }
+      else if (r < 0.92) await send({ action: 'turn', cell: 0, id: 999_999 }, run.tick + 1);
+      else if (r < 0.93) await send({ action: 'turn', cell: 0, id: 1, score: 99999 }, run.tick + 1);
     }
     await run.advanceTo(config.maxTicks as number); local = engine.advance(local, run.tick);
     assert.equal(run.state.gameOver, true);
@@ -376,7 +397,7 @@ test('wen-azulejo: whole runs through the BUILT verifier, called every tick like
     for (const { input, tick } of sent) await again.input(input, tick);
     await again.advanceTo(run.tick);
     assert.deepEqual(again.state, run.state, 'same seed, same inputs at the same ticks: same run');
-    console.log(`  wen-azulejo built verifier (seed ${seed}): ${run.calls} calls, end ${run.state.play.end}, score ${run.state.play.score}, made ${run.state.play.made}, errors ${run.state.play.errors}, painted ${run.state.play.painted.length}, largest state ${run.largestState} B`);
+    console.log(`  wen-azulejo built verifier (seed ${seed}): ${run.calls} calls, end ${run.state.play.end}, score ${run.state.play.score}, rosettes ${run.state.play.made}, spun ${run.state.play.spun}, saved ${run.state.play.rescued}, painted ${run.state.play.painted.length}, largest state ${run.largestState} B`);
     assert.ok(run.largestState < 16_384);
   }
   times.sort((a, b) => a - b);

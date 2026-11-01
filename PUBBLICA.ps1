@@ -111,7 +111,7 @@ if ($null -eq $updated -or -not $updated.ok) {
   if ($null -eq $updated -or -not $updated.ok) { Fail "La pubblicazione non e' riuscita. Risposta: $script:CliRaw" }
 }
 
-$line = 'Link fragments of azulejos in Lisbon, paint the names of the wall, keep the wall from cracking. 90 seconds.'
+$line = 'Turn the azulejos of Lisbon, close the rosettes, save the loose tiles, paint the names of the wall. 90 seconds.'
 Write-Host ''
 Write-Host 'FATTO: WEN AZULEJO e'' online.' -ForegroundColor Green
 Write-Host ''
