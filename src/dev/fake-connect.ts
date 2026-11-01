@@ -5,24 +5,20 @@
 //
 // Query parameters: ?credits=N (starting balance, default 0) · ?signed=1 (start signed in) · ?ticks=N (run length in
 // 50 ms ticks, default 400) · ?mismatch=1 (the claim is refused as "does not match this payment quote") · ?address=0x…
-// (sign in as that wallet, e.g. a holder of the wall, to see FULL ROW's YOUR NAME).
-import { ELIG, TAP_POOL, WALL_PANELS } from '../generated/wall.js';
-import { createEngine as createUb } from '../games/unbreakable/engine.js';
-import { createEngine as createTap } from '../games/tap-the-name/engine.js';
-import { createEngine as createFullRow } from '../games/full-row/engine.js';
-import { createEngine as createAzulejo } from '../games/wen-azulejo/core.js';
+// (sign in as that wallet, e.g. a holder of the wall).
+import { WALL_PANELS } from '../generated/wall.js';
+import { createEngine } from '../games/wen-azulejo/core.js';
 import { scoringConfiguration } from '../shell/config.js';
 import { PACK, formatPrice } from '../shell/credits.js';
 
-declare const __FAKE_GAME__: 'unbreakable' | 'tap-the-name' | 'full-row' | 'wen-azulejo';
 
 const params = new URLSearchParams(location.search);
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/.test(params.get('address') ?? '') ? (params.get('address') as string).toLowerCase() : '0xdec0de0000000000000000000000000000000001';
-const TREASURY = '0xb6ede0158e1792ed25e1367edeec05a824d7c9ad';
-const GAME = typeof __FAKE_GAME__ === 'string' ? __FAKE_GAME__ : 'unbreakable';
-const engine = (GAME === 'tap-the-name' ? createTap(TAP_POOL) : GAME === 'full-row' ? createFullRow() : GAME === 'wen-azulejo' ? createAzulejo(WALL_PANELS) : createUb(ELIG)) as unknown as ReturnType<typeof createUb>;
+const TREASURY = '0x000000000000000000000000000000000000dEaD';   // a placeholder: nothing is ever paid here
+const GAME = 'wen-azulejo';
+const engine = createEngine(WALL_PANELS);
 const lagMs = Number(params.get('lag') ?? 0);          // one-way network delay, both directions
-const runTicks = Number(params.get('ticks') ?? scoringConfiguration(typeof __FAKE_GAME__ === 'string' ? __FAKE_GAME__ : 'unbreakable').roundTicks);
+const runTicks = Number(params.get('ticks') ?? scoringConfiguration('wen-azulejo').roundTicks);
 const uuid = (): string => (typeof crypto.randomUUID === 'function' ? crypto.randomUUID()
   : '10000000-1000-4000-8000-100000000000'.replace(/[018]/g, (c) => (Number(c) ^ (crypto.getRandomValues(new Uint8Array(1))[0] as number) & (15 >> (Number(c) / 4))).toString(16)));
 const later = (ms: number): string => new Date(Date.now() + ms).toISOString();

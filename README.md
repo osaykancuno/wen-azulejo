@@ -52,7 +52,7 @@ rare-profile app update <app-id> --zip dist/wen-azulejo.zip --max-attempts 10000
 ```
 
 Try it locally without a wallet (fake Connect, no real payment): `node --import tsx scripts/dev-flow.ts
-dist/dev-wen-azulejo wen-azulejo`, then serve `dist/dev-wen-azulejo` on localhost (`?credits=3&signed=1`).
+dist/dev-wen-azulejo`, then serve `dist/dev-wen-azulejo` on localhost (`?credits=3&signed=1`).
 
 ## Where things are
 
@@ -66,14 +66,14 @@ dist/dev-wen-azulejo wen-azulejo`, then serve `dist/dev-wen-azulejo` on localhos
 | Tests: rules, latency, forged inputs, tampered states, replay, the built verifier | `tests/wen-azulejo.test.ts` |
 | Publishing | `PUBBLICA.cmd`, `PUBBLICA.ps1`, `scripts/wen-azulejo-config.ts` |
 | Names of the wall (build-time snapshot, refreshed by PUBBLICA) | `src/generated/wall.json`, `scripts/snapshot-wall.ts` |
+| Local test page without a wallet; cold start of the built verifier | `scripts/dev-flow.ts`, `scripts/dev-serve.ts`, `scripts/measure-cold-verifier.ts` |
 
 The only game input is `{ "action": "turn", "cell": 0–41, "id": <the tile in it> }`, plus `{ "action": "start" }`:
 never a score, a time or a state. A tap on a tile that left its slot in the meantime does nothing.
 
 The rest (sign-in, credits, paid start, weekly leaderboard, Practice, the people of the wall's sprites) is
 [THE WALL ARCADE's code](https://github.com/hs7j4yk4sz-boop/wall-arcade-connect), itself built on SuperRare's
-[studio-games-example](https://github.com/superrare/studio-games-example): see `LICENSE` and `NOTICE` (MIT). The
-arcade's other games (UNBREAKABLE, FULL ROW, TAP THE NAME) stay in `src/` because the shared page and its tests use
-them; this repository builds and publishes WEN AZULEJO only.
+[studio-games-example](https://github.com/superrare/studio-games-example): see `LICENSE` and `NOTICE` (MIT). This
+repository holds WEN AZULEJO only.
 
 Perfectly legal automated inputs are accepted by these rules: the game is not bot-proof.

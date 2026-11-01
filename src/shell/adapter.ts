@@ -3,7 +3,7 @@ import type * as z from 'zod/mini';
 /** What PaidRound (the paid-start / server-run state machine) needs from one game. */
 export interface GameAdapter {
   /** Matches the public config's `game` and the state's `rules.game`. */
-  id: 'unbreakable' | 'tap-the-name' | 'full-row' | 'wen-azulejo';
+  id: 'wen-azulejo';
   /** Page and arena label. */
   title: string;
   /** Section heading above the game card. */

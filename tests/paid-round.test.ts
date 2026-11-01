@@ -4,12 +4,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { PaidRound } from '../src/shell/paid-round.js';
-import { tapAdapter } from '../src/games/tap-the-name/client.js';
-import { createEngine as createTap, type TapState, type TapQuestion } from '../src/games/tap-the-name/engine.js';
-import { createEngine as createUb, snapshotSchema as ubSnapshotSchema, stateSchema as ubStateSchema, inputSchema as ubInputSchema } from '../src/games/unbreakable/engine.js';
-import { createSavedRoundParser } from '../src/shell/saved-round.js';
+import { wenAzulejoAdapter as adapter } from '../src/games/wen-azulejo/client.js';
+import { createEngine, turned, type AzState, type Tile } from '../src/games/wen-azulejo/engine.js';
 import { scoringConfiguration } from '../src/shell/config.js';
-import { ELIG } from '../src/generated/wall.js';
+import { WALL_PANELS } from '../src/generated/wall.js';
 
 const appId = '11111111-1111-4111-8111-111111111111';
 const groupId = '22222222-2222-4222-8222-222222222222';
@@ -22,9 +20,6 @@ type PaidRequest = { idempotencyKey: string; fingerprint: string; expectedCredit
 type RunRequest = { sessionToken: string; eventId: string; idempotencyKey: string };
 
 const PaidRoundAny = PaidRound as unknown as new (options: any) => any;
-// the UNBREAKABLE adapter minus its canvas stage (which needs a browser): same schemas, same rules
-const unbreakableAdapter = { ...tapAdapter, id: 'unbreakable', stateSchema: ubStateSchema, snapshotSchema: ubSnapshotSchema,
-  parseSavedRound: createSavedRoundParser(ubStateSchema as never, ubInputSchema as never), applyInput: createUb(ELIG).applyInput } as unknown as typeof tapAdapter;
 
 class RoundHarness extends PaidRoundAny {
   saved: string[] = [];
@@ -46,7 +41,7 @@ test('uncertain paid start and server-run retry retain original keys, event, and
     startWithConsent: async (request: PaidRequest) => { paid.push(request); throw new Error('lost paid start response'); },
     recoverStart: async (request: { idempotencyKey: string }) => { recovered.push(request.idempotencyKey); return { session: { id: 'paid-session', token: 'test-only-session', expiresAt: '2099-01-01T00:00:00Z' }, game: {} }; },
   };
-  const options = { ...base, adapter: tapAdapter, game, scoringGame: {
+  const options = { ...base, adapter, game, scoringGame: {
     startServerValidatedRun: async (request: RunRequest) => { runs.push(request); throw new Error('lost run response'); },
     getActiveScoringEvent: async () => { throw new Error('must not rediscover event during recovery'); },
   } };
@@ -62,7 +57,7 @@ test('uncertain paid start and server-run retry retain original keys, event, and
   assert.deepEqual(runs[0], { sessionToken: 'test-only-session', eventId, idempotencyKey: originalRunKey });
   const restored = new RoundHarness(options);
   restored.storageKey = restored.accountStorageKey();
-  restored.state = tapAdapter.parseSavedRound(JSON.parse(round.saved.at(-1) as string));
+  restored.state = adapter.parseSavedRound(JSON.parse(round.saved.at(-1) as string));
   await restored.recover();
   assert.equal(paid.length, 2, 'reload/recover must not request new consent or a new paid start');
   assert.equal(recovered.length, 1, 'known paid session is reused');
@@ -74,7 +69,7 @@ test('wallet replacement during consent never starts or transfers the old wallet
   const game = { getAuthorization: () => authorization,
     requestConsent: async () => { currentAddress = '0x2222222222222222222222222222222222222222'; return { consent: {} }; },
     startWithConsent: async () => { starts += 1; throw new Error('must never run'); } };
-  const round: any = new RoundHarness({ ...base, adapter: unbreakableAdapter, game, scoringGame: {}, getAddress: () => currentAddress });
+  const round: any = new RoundHarness({ ...base, adapter, game, scoringGame: {}, getAddress: () => currentAddress });
   round.storageKey = round.accountStorageKey();
   const originalStorageKey = round.storageKey;
   await round.confirmRound(terms, 'original-paid-key', eventId);
@@ -90,11 +85,11 @@ test('memory-only consent never sends a paid start and retains the original atte
     requestConsent: async () => ({ consent: { token: 'memory-only' }, recovery }),
     startWithConsent: async () => { starts += 1; throw new Error('Paid start must not run without durable consent'); },
     recoverStart: async () => { recoveries += 1; throw new Error('Lost recovery response'); } };
-  const round: any = new RoundHarness({ ...base, adapter: tapAdapter, game, scoringGame: {} });
+  const round: any = new RoundHarness({ ...base, adapter, game, scoringGame: {} });
   round.storageKey = round.accountStorageKey();
   await round.confirmRound(terms, 'original-paid-key', eventId);
   assert.equal(starts, 0); assert.equal(round.state.key, 'original-paid-key'); assert.equal(round.state.phase, 'pending');
-  assert.equal(tapAdapter.parseSavedRound(JSON.parse(round.saved.at(-1) ?? 'null')).request && (tapAdapter.parseSavedRound(JSON.parse(round.saved.at(-1) as string)) as any).request.idempotencyKey, 'original-paid-key');
+  assert.equal(adapter.parseSavedRound(JSON.parse(round.saved.at(-1) ?? 'null')).request && (adapter.parseSavedRound(JSON.parse(round.saved.at(-1) as string)) as any).request.idempotencyKey, 'original-paid-key');
   await round.recover();
   assert.equal(recoveries, 0, 'Continue must not bypass the failed durability check');
   recovery = 'persistent';
@@ -103,9 +98,10 @@ test('memory-only consent never sends a paid start and retains the original atte
 });
 
 /* ---- the adapter seam ---- */
-const tapEngine = createTap(ELIG), tapConfig = scoringConfiguration('tap-the-name');
+const engine = createEngine(WALL_PANELS), config = scoringConfiguration('wen-azulejo');
+const OPEN = 60;
 const configDigest = 'a'.repeat(64);
-function playingRound(adapter: typeof tapAdapter, state0: unknown) {
+function playingRound(state0: unknown) {
   const sent: string[] = []; const stageCalls: string[] = [];
   const round: any = new RoundHarness({ ...base, adapter, game: { getAuthorization: () => authorization }, scoringGame: {} });
   round.storageKey = round.accountStorageKey();
@@ -122,54 +118,55 @@ function playingRound(adapter: typeof tapAdapter, state0: unknown) {
 }
 
 test('a first snapshot of an unstarted run queues exactly one start, which is sent as an ordered input (no score, no time)', () => {
-  const { round, sent, packet } = playingRound(tapAdapter, tapEngine.createRun(5, tapConfig));
+  const { round, sent, packet } = playingRound(engine.createRun(5, config));
   round.lastPacketAt = performance.now() - 120;
-  round.acceptSnapshot(tapAdapter.snapshotSchema.parse(packet(tapEngine.createRun(5, tapConfig), 3)));
+  round.acceptSnapshot(adapter.snapshotSchema.parse(packet(engine.createRun(5, config), 3)));
   assert.equal(round.state.run.pendingInputs.length, 1);
   assert.deepEqual(round.state.run.pendingInputs[0].input, { action: 'start' });
   assert.equal(sent.length, 1);
   assert.deepEqual(JSON.parse(sent[0] as string), { type: 'input', seq: 1, input: { action: 'start' } });
-  round.acceptSnapshot(tapAdapter.snapshotSchema.parse(packet(tapEngine.createRun(5, tapConfig), 4)));
+  round.acceptSnapshot(adapter.snapshotSchema.parse(packet(engine.createRun(5, config), 4)));
   assert.equal(round.state.run.pendingInputs.length, 1, 'the start is not queued twice');
 });
 
-test('prediction: a queued answer is applied where the player made it, then replaced by the next server snapshot', () => {
-  const started = tapEngine.applyInput(tapEngine.createRun(8, tapConfig), { action: 'start' }, 0);
-  const { round, sent, packet } = playingRound(tapAdapter, started);
-  round.acceptSnapshot(tapAdapter.snapshotSchema.parse(packet(started, 6)));
-  const question = started.question as TapQuestion;
+test('prediction: a queued turn shows at once, applied where the player made it, then replaced by the next server snapshot', () => {
+  const live = engine.advance(engine.applyInput(engine.createRun(8, config), { action: 'start' }, 0), OPEN + 10);
+  const { round, sent, packet } = playingRound(live);
+  round.acceptSnapshot(adapter.snapshotSchema.parse(packet(live, OPEN + 10)));
+  const cell = 14, tile = live.play.tiles[cell] as Tile;
   round.lastPacketAt = performance.now() - 200;                    // ~4 ticks after that snapshot
-  round.userInput({ action: 'choose', questionId: question.id, pos: question.target });
-  assert.equal(round.predictedView.score, 1, 'the answer shows immediately');
-  assert.ok(round.predictedView.nextRoundAt >= 6 + 5, 'applied at the player\'s own tick, not before the snapshot');
-  assert.equal(sent.length, 1); assert.equal(JSON.parse(sent[0] as string).input.pos, question.target);
-  // the server accepted it as input #1 at tick 12: its snapshot replaces the guess and clears the queue
-  const accepted = tapEngine.applyInput(started, { action: 'choose', questionId: question.id, pos: question.target }, 12);
-  round.acceptSnapshot(tapAdapter.snapshotSchema.parse(packet(accepted, 13, { inputSeq: 1, inputTick: 12 })));
+  round.userInput({ action: 'turn', cell, id: tile.id });
+  const predicted = round.predictedView as AzState;
+  assert.equal(predicted.play.tiles[cell]?.turns, 1, 'the turn shows immediately');
+  assert.deepEqual(predicted.play.tiles[cell]?.c, turned(tile.c));
+  assert.ok(predicted.tick >= OPEN + 13, "applied at the player's own tick, not at the snapshot's");
+  assert.equal(sent.length, 1); assert.deepEqual(JSON.parse(sent[0] as string).input, { action: 'turn', cell, id: tile.id });
+  // the server accepted it as input #1 at tick OPEN+16: its snapshot replaces the guess and clears the queue
+  const accepted = engine.applyInput(live, { action: 'turn', cell, id: tile.id }, OPEN + 16);
+  round.acceptSnapshot(adapter.snapshotSchema.parse(packet(accepted, OPEN + 17, { inputSeq: 1, inputTick: OPEN + 16 })));
   assert.equal(round.state.run.pendingInputs.length, 0);
-  assert.equal(round.predictedView.score, 1); assert.equal(round.predictedView.nextRoundAt, 17);
-  // refused while no round is running or when the queue is full
-  round.state.phase = 'finalizing'; round.userInput({ action: 'choose', questionId: 1, pos: 1 });
+  assert.deepEqual(round.predictedView, accepted);
+  round.state.phase = 'finalizing'; round.userInput({ action: 'turn', cell: 0, id: 1 });
   assert.equal(sent.length, 1, 'inputs are dropped once the round is finishing');
 });
 
 test('a terminal snapshot with the platform result finalizes the round and hands the official score to the stage', () => {
-  const started = tapEngine.applyInput(tapEngine.createRun(8, tapConfig), { action: 'start' }, 0);
-  const over = tapEngine.advance(started, started.question!.deadlineTick);
+  const started = engine.applyInput(engine.createRun(8, config), { action: 'start' }, 0);
+  const over = engine.advance(started, config.maxTicks);
   assert.equal(over.gameOver, true);
-  const { round, stageCalls, packet } = playingRound(tapAdapter, started);
+  const { round, stageCalls, packet } = playingRound(started);
   (round as any).submitAndComplete = async () => undefined;       // completion is the SDK's business, not under test here
-  round.acceptSnapshot(tapAdapter.snapshotSchema.parse(packet(over, over.tick, { result: { runId, score: '0', status: 'completed' } })));
-  assert.equal(round.state.phase, 'finalizing'); assert.equal(round.state.result.score, 0);
-  assert.ok(stageCalls.some((call) => call.startsWith('setMessage:Server-verified score: 0.')), stageCalls.join(' | '));
+  round.acceptSnapshot(adapter.snapshotSchema.parse(packet(over, over.tick, { result: { runId, score: String(over.play.score), status: 'completed' } })));
+  assert.equal(round.state.phase, 'finalizing'); assert.equal(round.state.result.score, over.play.score);
+  assert.ok(stageCalls.some((call) => call.startsWith(`setMessage:Server-verified score: ${over.play.score}.`)), stageCalls.join(' | '));
   assert.equal(round.socket, null, 'the socket is released');
 });
 
 test('snapshots of another run, another verifier or another game are refused', () => {
-  const state0 = createUb(ELIG).createRun(3, scoringConfiguration('unbreakable'));
-  const { round, packet } = playingRound(unbreakableAdapter as never, state0);
+  const state0 = engine.createRun(3, config);
+  const { round, packet } = playingRound(state0);
   assert.throws(() => round.acceptSnapshot({ ...packet(state0, 2), runId: '55555555-5555-4555-8555-555555555555' }), /different run or verifier/);
   assert.throws(() => round.acceptSnapshot({ ...packet(state0, 2), configDigest: 'b'.repeat(64) }), /different run or verifier/);
-  const tapState = tapEngine.createRun(3, tapConfig) as TapState;
-  assert.throws(() => unbreakableAdapter.snapshotSchema.parse(packet(tapState, 2)));
+  assert.throws(() => adapter.snapshotSchema.parse(packet({ ...state0, rules: { ...state0.rules, game: 'gate-rush' } }, 2)));
+  assert.throws(() => adapter.snapshotSchema.parse(packet({ question: null, score: 9 }, 2)));
 });

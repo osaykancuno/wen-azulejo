@@ -22,7 +22,7 @@ import { PaidRound } from './paid-round.js';
 import { Practice } from './practice.js';
 import { copyText, diag } from './diagnostics.js';
 import { lisbonWeek, WEEK_LABEL, weekEnds } from './week.js';
-import { CARD_SERVICE, wirePostLink } from '../share/post.js';
+import { CARD_SERVICE } from '../share/post.js';
 import { loadPeople, missingCharacter, openCapture } from './people.js';
 import { beacon, setBeaconContext } from '../share/beacon.js';
 
@@ -415,23 +415,6 @@ export async function startApp(adapter: GameAdapter): Promise<void> {
   void fetch(`${CARD_SERVICE}/pot`).then((r) => (r.ok ? r.json() : null)).then((d: { pot?: unknown } | null) => {
     if (boardEnds && d && typeof d.pot === 'string' && /^\d+\.\d{4}$/.test(d.pot)) boardEnds.textContent = `Jackpot ${d.pot} ETH · ${weekEnds(lisbonWeek())}`;
   }).catch(() => undefined);
-  /* "post on X", a text link right of the label: a card made by the card service from the platform's own leaderboard
-     (the rows are read there, not sent from here), the player's line in blue; the link is ready before the tap. */
-  const boardPost = node('a', 'post on X', 'board-post');
-  boardPost.hidden = true;
-  boardTitle?.after(boardPost);
-  let boardPostKey = '';
-  function prepareBoardPost(): void {
-    const wallet = address(), mine = myEntry(wallet);
-    const me = mine ? (mine.player.ensName ?? mine.player.displayName) : undefined;
-    const key = JSON.stringify([board.slice(0, 10).map((e) => [e.rank, e.score, e.player.displayName]), me]);
-    if (key === boardPostKey) return;
-    boardPostKey = key;
-    const gameUrl = `${location.origin}/`, game = adapter.id === 'unbreakable' ? 'unbreakable' : 'full-row';
-    wirePostLink(boardPost, { kind: 'board', game, ...(me ? { me } : {}) },
-      (link) => (mine ? `#${mine.rank} on ${adapter.title} this week · ${mine.score} points. ${link}` : `This week's top 5 of ${adapter.title} on THE WALL ARCADE. ${link}`),
-      gameUrl, 'post on X', 'post on X');
-  }
   /** ENS when Studio resolved one, else the shortened address (the full address stays in the tooltip). */
   function playerLabel(entry: BoardEntry): string {
     if (entry.player.ensName) return entry.player.ensName;
@@ -480,9 +463,6 @@ export async function startApp(adapter: GameAdapter): Promise<void> {
     const mine = myEntry(wallet);
     const top = board.slice(0, 3);
     if (mine && mine.rank > 3) top.push(mine);
-    // the card service draws boards of the arcade's own two games only
-    boardPost.hidden = !top.length || (adapter.id !== 'unbreakable' && adapter.id !== 'full-row');
-    if (!boardPost.hidden) prepareBoardPost();
     if (!top.length) {
       ui.boardList.replaceChildren(node('li', boardFailed ? 'Scores could not be loaded right now.' : boardLoaded ? 'No scores yet this week. Be the first.' : 'Loading scores…', 'empty'));
       return;

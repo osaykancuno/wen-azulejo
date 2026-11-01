@@ -14,7 +14,7 @@ const publicHttpsUrl = z.string().url().refine((value) => {
   return url.protocol === 'https:' && !url.username && !url.password && !url.hostname.endsWith('.invalid');
 }, 'Must be a public HTTPS URL');
 
-export const GAME_IDS = ['unbreakable', 'tap-the-name', 'full-row', 'wen-azulejo'] as const;
+export const GAME_IDS = ['wen-azulejo'] as const;
 export type GameId = (typeof GAME_IDS)[number];
 
 export const configurationSchema = z.object({
@@ -53,13 +53,9 @@ export function parseConfiguration(value: unknown, currentOrigin?: string): Conf
 /**
  * The scoring configuration published with each deployment (scoring-config.json, pasted into the verifier version).
  * Ticks are the platform's 50 ms server ticks. A run lasts at most `roundTicks` after its explicit start and never
- * more than `maxTicks` after creation: UNBREAKABLE 3 minutes, TAP THE NAME 90 seconds, FULL ROW an 8-minute cap (a run
- * normally ends before, when no piece fits; a run cut by the cap keeps its score), WEN AZULEJO 3 s of countdown and
- * 90 s of painting (a run ends before when the wall takes too many cracks).
+ * more than `maxTicks` after creation: WEN AZULEJO 3 s of countdown and 90 s of play (a run ends before when the wall
+ * takes too many cracks), with 15 s of room to start.
  */
 export function scoringConfiguration(game: GameId): { game: GameId; maxTicks: number; roundTicks: number } {
-  if (game === 'unbreakable') return { game, maxTicks: 3900, roundTicks: 3600 };
-  if (game === 'full-row') return { game, maxTicks: 9900, roundTicks: 9600 };
-  if (game === 'wen-azulejo') return { game, maxTicks: 2160, roundTicks: 1860 };
-  return { game, maxTicks: 1900, roundTicks: 1800 };
+  return { game, maxTicks: 2160, roundTicks: 1860 };
 }

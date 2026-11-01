@@ -15,7 +15,6 @@ import { infoOf } from '../../shell/wall-data.js';
 import { loadPeople, onPeople, sheetOfName } from '../../shell/people.js';
 import { DIR, drawSprite, stepAt, type SpriteSheet } from '../../share/sprite.js';
 import { fitTweet, intentHref, tag } from '../../share/post.js';
-import { rankOf } from '../../share/end-screen.js';
 import { WALL_PANELS } from '../../generated/wall.js';
 import { fnv1a } from '../../common/det.js';
 import {
@@ -42,6 +41,8 @@ const cellY = (cell: number): number => GY + Math.floor(cell / COLS) * CELL + CE
 const vertX = (v: number): number => GX + ((v % VCOLS) + 1) * CELL;
 const vertY = (v: number): number => GY + (Math.floor(v / VCOLS) + 1) * CELL;
 const pick = <T,>(list: readonly T[], key: string): T => list[fnv1a(key) % list.length] as T;
+/** "#3" -> 3; "—" or "Not top 10" -> undefined. */
+const rankOf = (rank: string | undefined): number | undefined => { const m = rank ? /^#(\d+)$/.exec(rank) : null; return m ? Number(m[1]) : undefined; };
 
 /** What the wall says (display only, picked from the event number). */
 const SAYS: Record<What, readonly string[]> = {
@@ -170,11 +171,11 @@ function createStage(host: HTMLElement, io: StageIO): Stage {
   host.classList.add('az-arena', 'own-end');
   host.replaceChildren();
   const canvas = document.createElement('canvas');
-  canvas.className = 'ub-canvas az-canvas';
+  canvas.className = 'game-canvas az-canvas';
   canvas.setAttribute('role', 'img');
   canvas.setAttribute('aria-label', 'WEN AZULEJO. A wall of 6 by 7 azulejos, each with four coloured corners. Tap a tile to turn it a quarter turn. Where four corners of one colour meet, a rosette closes. Save the loose tiles (SOS) by putting them in a rosette; golden tiles paint a name of the wall.');
   const soundButton = document.createElement('button');
-  soundButton.type = 'button'; soundButton.className = 'ub-sound secondary';
+  soundButton.type = 'button'; soundButton.className = 'game-sound secondary';
   const label = (): void => { soundButton.textContent = soundOn ? 'Sound on' : 'Sound off'; };
   label();
   soundButton.addEventListener('click', () => { soundOn = !soundOn; label(); try { localStorage.setItem(SOUND_KEY, soundOn ? 'on' : 'off'); } catch { /* storage unavailable */ } });

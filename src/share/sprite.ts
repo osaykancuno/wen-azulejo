@@ -1,6 +1,6 @@
 // A walking sprite of the people of the wall (Sprite Party, mirrored by the card service: people.json): a PNG of
 // 192 × 192, a 4 × 4 grid of 48 × 48 frames, one row per direction, four steps of 130 ms. Pure drawing on a canvas:
-// the games draw it live, the cards (src/share/card-draw.ts) draw one frame of it, in the browser and on the server.
+// the game draws it live, and one frame of it on the end card.
 export const FRAME = 48, STEPS = 4, STEP_MS = 130;
 export const DIR = { UP: 0, RIGHT: 1, DOWN: 2, LEFT: 3 } as const;
 export type SpriteSheet = CanvasImageSource & { width: number; height: number };

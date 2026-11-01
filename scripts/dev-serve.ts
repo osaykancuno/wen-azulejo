@@ -13,7 +13,7 @@ import { extname, join, normalize, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 
 const { values, positionals } = parseArgs({ allowPositionals: true, options: { lan: { type: 'boolean', default: false }, port: { type: 'string', default: '8443' } } });
-const root = resolve(positionals[0] ?? 'dist/dev-full-row');
+const root = resolve(positionals[0] ?? 'dist/dev-wen-azulejo');
 if (!existsSync(join(root, 'index.html'))) throw new Error(`${root}/index.html not found: build it first with scripts/dev-flow.ts`);
 const certDir = resolve('dist/dev-cert');
 if (!existsSync(join(certDir, 'cert.pem'))) {
@@ -21,7 +21,7 @@ if (!existsSync(join(certDir, 'cert.pem'))) {
   execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', join(certDir, 'key.pem'), '-out', join(certDir, 'cert.pem'),
     '-days', '30', '-subj', '/CN=wall-arcade-dev'], { stdio: 'ignore' });
 }
-const types: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.map': 'application/json', '.jpg': 'image/jpeg' };
+const types: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.map': 'application/json' };
 const host = values.lan ? '0.0.0.0' : '127.0.0.1', port = Number(values.port);
 createServer({ key: readFileSync(join(certDir, 'key.pem')), cert: readFileSync(join(certDir, 'cert.pem')) }, async (request, response) => {
   const path = normalize(decodeURIComponent(new URL(request.url ?? '/', 'https://x').pathname)).replace(/^(\.\.[/\\])+/, '');

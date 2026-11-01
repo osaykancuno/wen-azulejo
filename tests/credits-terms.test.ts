@@ -75,7 +75,7 @@ test('the purchase guard reads the current quote shape: currency ETH and no toke
 
 test('purchases saved before the change (usdcAddress) still load, normalised to currency + tokenAddress', () => {
   const base = { id: 'p', accountId: 'a', paymentConfigId: 'c', chainId: 1, address: '0x1111111111111111111111111111111111111111',
-    treasuryAddress: '0xb6ede0158e1792ed25e1367edeec05a824d7c9ad', packPriceAtomic: '10000000', packCredits: 50, minBlock: '1',
+    treasuryAddress: '0x000000000000000000000000000000000000dEaD', packPriceAtomic: '10000000', packCredits: 50, minBlock: '1',
     createdAt: '2026-10-18T00:00:00Z', expiresAt: '2026-10-18T00:10:00Z', transactionHash: null, creditedAt: null };
   const legacy = parseSavedPurchase({ purchase: { ...base, usdcAddress: USDC }, confirmPayment: true });
   assert.equal(legacy.purchase.currency, 'USDC');
