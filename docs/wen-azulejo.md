@@ -33,11 +33,17 @@ sta più in basso di questa scala.
 
 ## Pubblicare da Windows
 
-Doppio clic su `PUBBLICA.cmd` (la prima volta e ogni volta che il gioco cambia). Fa tutto `PUBBLICA.ps1`: controlla
-Node.js, installa la riga di comando di SuperRare e le dipendenze, aggiorna i nomi del muro, lancia i test, fa il login
-se serve, crea l'app una volta sola (un'app nuova, separata da GATE RUSH: la risposta resta in
-`deploy/wen-azulejo.app.json`, la config in `deploy/wen-azulejo.config.json`), costruisce lo ZIP e aggiorna la stessa
-app; alla fine stampa i dati per il modulo di invio e apre il gioco e la pagina di invio.
+Il gioco e' online su https://ez4wt9d2.srstudio.dev. Per aggiornarlo: doppio clic su `PUBBLICA.cmd`. Fa tutto
+`PUBBLICA.ps1`: controlla Node.js, installa la riga di comando di SuperRare e le dipendenze, aggiorna i nomi del muro,
+lancia i test, fa il login se serve, costruisce lo ZIP e aggiorna la stessa app; alla fine stampa i dati per il modulo
+di invio e apre il gioco e la pagina di invio.
+
+- La scheda dell'app e' `deploy/wen-azulejo.config.json` (App ID e indirizzo, niente di segreto). In una copia nuova del
+  progetto che non ce l'ha, lo script chiede l'App ID del gioco online e aggiorna QUELLA app: ne crea una nuova solo se
+  scrivi NUOVA.
+- Prima di pubblicare stampa quale codice gira online e quale sta per andarci: ogni build scrive in `index.html`
+  `<meta name="game-code" content="wen-azulejo@…">`, l'impronta del codice del gioco (tutti i sorgenti tranne i nomi
+  del muro). Stessa impronta, stesso gioco. Le versioni pubblicate prima del timbro non ce l'hanno.
 
 ## Dove sta
 

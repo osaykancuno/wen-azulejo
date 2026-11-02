@@ -4,7 +4,7 @@ import { dirname, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { zipSync } from 'fflate';
 import { parseConfiguration } from '../src/shell/config.js';
-import { packageGame } from './package-game.js';
+import { codeFingerprint, packageGame } from './package-game.js';
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
@@ -21,7 +21,7 @@ async function main(): Promise<void> {
   await mkdir(dirname(output), { recursive: true });
   const temporary = `${output}.${process.pid}.tmp`;
   try { await writeFile(temporary, archive, { flag: 'wx' }); await rename(temporary, output); } finally { await rm(temporary, { force: true }); }
-  process.stdout.write(`Game: ${configuration.game}\nArchive: ${output}\nSDK: @rareprotocol/connect@0.11.0 (published npm package)\nSHA-256: ${createHash('sha256').update(archive).digest('hex')}\nSize: ${archive.byteLength} bytes\n`);
+  process.stdout.write(`Game: ${configuration.game}\nCode: ${configuration.game}@${await codeFingerprint()}\nArchive: ${output}\nSDK: @rareprotocol/connect@0.11.0 (published npm package)\nSHA-256: ${createHash('sha256').update(archive).digest('hex')}\nSize: ${archive.byteLength} bytes\n`);
 }
 void main().catch((error: unknown) => {
   process.stderr.write(`Build failed: ${error instanceof Error ? error.message : 'unknown error'}\n`);

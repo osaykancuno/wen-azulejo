@@ -62,6 +62,21 @@ if (-not (Test-Path $Config) -and (Test-Path $Answer)) {
   Step 'Riprendo la prima pubblicazione: l''app esiste gia'''
   Run 'npx' @('tsx', 'scripts/wen-azulejo-config.ts', $Answer) 'La scrittura della configurazione'
 }
+# il gioco e' gia' online: senza la sua config in questa cartella (una copia nuova del progetto) si aggiorna QUELLA app,
+# mai una seconda. Una nuova app solo se lo chiedi scrivendo NUOVA.
+$KnownOrigin = 'https://ez4wt9d2.srstudio.dev'
+if (-not (Test-Path $Config)) {
+  Step "Il gioco e' gia' online: $KnownOrigin"
+  Write-Host "In questa cartella manca deploy\wen-azulejo.config.json (la scheda della tua app)."
+  Write-Host "Incolla l'App ID del gioco online (lo trovi su https://studio.superrare.com nella pagina dell'app, o nella"
+  Write-Host "finestra della prima pubblicazione). Scrivi NUOVA solo se vuoi davvero creare un'altra app."
+  while (-not (Test-Path $Config)) {
+    $typed = "$(Read-Host 'App ID')".Trim()
+    if ($typed -eq 'NUOVA') { break }
+    if ($typed -notmatch '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$') { Write-Host 'Non e'' un App ID (8-4-4-4-12 caratteri). Riprova.' -ForegroundColor Yellow; continue }
+    Run 'npx' @('tsx', 'scripts/wen-azulejo-config.ts', '--app-id', $typed, '--origin', $KnownOrigin) 'La scrittura della configurazione'
+  }
+}
 if (-not (Test-Path $Config)) {
   Step 'Prima pubblicazione: login e negozio'
   $stores = Invoke-Rare @('store', 'list')
@@ -100,6 +115,18 @@ if (-not (Test-Path $Config)) {
 $cfg = Get-Content -Raw -LiteralPath $Config | ConvertFrom-Json
 Step "Costruisco il gioco per $($cfg.appOrigin)"
 Run 'npx' @('tsx', 'scripts/build.ts', '--config', 'deploy/wen-azulejo.config.json', '--output', 'dist/wen-azulejo.zip', '--force') 'La build'
+
+# quale codice gira online, e quale sta per andarci (il timbro <meta name="game-code"> di index.html)
+$built = ''
+try { Add-Type -AssemblyName System.IO.Compression.FileSystem; $zipFile = [System.IO.Compression.ZipFile]::OpenRead($Zip)
+  $reader = New-Object System.IO.StreamReader(($zipFile.GetEntry('index.html')).Open()); $html = $reader.ReadToEnd(); $reader.Close(); $zipFile.Dispose()
+  if ($html -match 'name="game-code" content="([^"]+)"') { $built = $Matches[1] } } catch { }
+$online = ''
+try { $page = Invoke-WebRequest -UseBasicParsing -Uri "$($cfg.appOrigin)/" -TimeoutSec 20
+  if ($page.Content -match 'name="game-code" content="([^"]+)"') { $online = $Matches[1] } else { $online = '(nessun timbro: una versione precedente)' } } catch { $online = '(non raggiungibile adesso)' }
+Write-Host "Online adesso       : $online"
+Write-Host "Questa versione     : $built"
+if ($online -eq $built) { Write-Host 'Il codice online e'' gia'' questo: aggiorno lo stesso (nomi del muro aggiornati).' -ForegroundColor Green }
 
 Step 'Pubblico il gioco su SuperRare Studio (verificatore e evento di punteggio compresi)'
 $updated = Invoke-Rare @('app', 'update', "$($cfg.appId)", '--zip', $Zip, '--max-attempts', '10000')

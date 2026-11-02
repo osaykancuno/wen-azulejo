@@ -37,9 +37,11 @@ arcade's own page (`src/shell/`).
 
 ## Publish (Windows)
 
-Double-click `PUBBLICA.cmd`. The first time it installs what is missing, logs in to SuperRare Studio, creates the app
-once (`deploy/wen-azulejo.config.json`, a new app of its own), then builds and publishes; every later run updates the
-same app. Details in [docs/wen-azulejo.md](docs/wen-azulejo.md) (Italian).
+The game is online at https://ez4wt9d2.srstudio.dev. Double-click `PUBBLICA.cmd`: it installs what is missing, logs in
+to SuperRare Studio if needed, builds and updates that same app (`deploy/wen-azulejo.config.json`; in a fresh copy
+without it, the script asks for the App ID of the game online and never creates a second app unless you type NUOVA).
+Each build stamps `index.html` with `<meta name="game-code" content="wen-azulejo@…">`, the fingerprint of the game's
+code, and the script shows the one online next to the one it is about to publish. Details in [docs/wen-azulejo.md](docs/wen-azulejo.md) (Italian).
 
 Elsewhere (Node.js 22+, `npm install --global @rareprotocol/rare-profile@0.1.0`, `rare-profile login`):
 

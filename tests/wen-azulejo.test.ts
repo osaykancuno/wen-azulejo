@@ -339,6 +339,7 @@ test('wen-azulejo: the archive has Studio\'s root layout, the credit line, a zod
   assert.ok(!/gate-rush|GATE RUSH/.test(strFromU8(verifier)), 'nothing of GATE RUSH inside');
   const html = strFromU8(files['index.html'] as Uint8Array);
   assert.ok(html.includes('<title>WEN AZULEJO · THE WALL ARCADE</title>'));
+  assert.match(html, /<meta name="game-code" content="wen-azulejo@[0-9a-f]{12}">/, 'the page says which code it runs');
   assert.ok(/remix the wall experiment/i.test(html) && html.includes('https://onthewall.nfcsummit.com'), 'the credit line, linked');
   const publicConfig = strFromU8(files['config.json'] as Uint8Array);
   assert.ok(!/secret|token|private|treasury|0x[0-9a-fA-F]{40}/i.test(publicConfig));
