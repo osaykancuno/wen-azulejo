@@ -37,9 +37,11 @@ arcade's own page (`src/shell/`).
 
 ## Publish (Windows)
 
-The game is online at https://ez4wt9d2.srstudio.dev. Double-click `PUBBLICA.cmd`: it installs what is missing, logs in
-to SuperRare Studio if needed, builds and updates that same app (`deploy/wen-azulejo.config.json`; in a fresh copy
-without it, the script asks for the App ID of the game online and never creates a second app unless you type NUOVA).
+The game is online at https://34s8u757.srstudio.dev (App ID `a592b9f0-9096-4c3f-a9f4-325aa7c349ef`, in
+`deploy/wen-azulejo.config.json`, public: no key or secret). Double-click `PUBBLICA.cmd`: it installs what is missing, logs in to SuperRare Studio if needed, builds and updates the
+app named in `deploy/wen-azulejo.config.json`. In a fresh copy without it, the script lists the WEN AZULEJO apps of
+your account (address and App ID) and asks which one to update; it creates an app only when there is none, or when you
+type NUOVA, and never touches an app with another title.
 Each build stamps `index.html` with `<meta name="game-code" content="wen-azulejo@…">`, the fingerprint of the game's
 code, and the script shows the one online next to the one it is about to publish. Details in [docs/wen-azulejo.md](docs/wen-azulejo.md) (Italian).
 

@@ -33,14 +33,17 @@ sta più in basso di questa scala.
 
 ## Pubblicare da Windows
 
-Il gioco e' online su https://ez4wt9d2.srstudio.dev. Per aggiornarlo: doppio clic su `PUBBLICA.cmd`. Fa tutto
-`PUBBLICA.ps1`: controlla Node.js, installa la riga di comando di SuperRare e le dipendenze, aggiorna i nomi del muro,
-lancia i test, fa il login se serve, costruisce lo ZIP e aggiorna la stessa app; alla fine stampa i dati per il modulo
-di invio e apre il gioco e la pagina di invio.
+Il gioco e' online su https://34s8u757.srstudio.dev (App ID `a592b9f0-9096-4c3f-a9f4-325aa7c349ef`).
 
-- La scheda dell'app e' `deploy/wen-azulejo.config.json` (App ID e indirizzo, niente di segreto). In una copia nuova del
-  progetto che non ce l'ha, lo script chiede l'App ID del gioco online e aggiorna QUELLA app: ne crea una nuova solo se
-  scrivi NUOVA.
+Doppio clic su `PUBBLICA.cmd`. Fa tutto `PUBBLICA.ps1`: controlla Node.js, installa la riga di comando di SuperRare e
+le dipendenze, aggiorna i nomi del muro, lancia i test, fa il login se serve, costruisce lo ZIP e aggiorna l'app; alla
+fine stampa i dati per il modulo di invio e apre il gioco e la pagina di invio.
+
+- La scheda dell'app e' `deploy/wen-azulejo.config.json` (App ID e indirizzo, niente di segreto): con quella lo script
+  aggiorna sempre la stessa app.
+- In una copia nuova del progetto che non ce l'ha, lo script cerca sul tuo account le app con WEN AZULEJO nel titolo,
+  le elenca con indirizzo e App ID e ti fa scegliere quale aggiornare. Ne crea una nuova solo se non ce n'e' nessuna,
+  o se scrivi NUOVA. Le app con un altro titolo (GATE RUSH) non vengono mai toccate.
 - Prima di pubblicare stampa quale codice gira online e quale sta per andarci: ogni build scrive in `index.html`
   `<meta name="game-code" content="wen-azulejo@…">`, l'impronta del codice del gioco (tutti i sorgenti tranne i nomi
   del muro). Stessa impronta, stesso gioco. Le versioni pubblicate prima del timbro non ce l'hanno.

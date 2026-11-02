@@ -62,19 +62,49 @@ if (-not (Test-Path $Config) -and (Test-Path $Answer)) {
   Step 'Riprendo la prima pubblicazione: l''app esiste gia'''
   Run 'npx' @('tsx', 'scripts/wen-azulejo-config.ts', $Answer) 'La scrittura della configurazione'
 }
-# il gioco e' gia' online: senza la sua config in questa cartella (una copia nuova del progetto) si aggiorna QUELLA app,
-# mai una seconda. Una nuova app solo se lo chiedi scrivendo NUOVA.
-$KnownOrigin = 'https://ez4wt9d2.srstudio.dev'
+# senza la scheda dell'app in questa cartella (una copia nuova del progetto): prima cerco sul tuo account le app
+# WEN AZULEJO gia' create e aggiorno una di quelle, mai una seconda. Una nuova app solo se lo chiedi scrivendo NUOVA.
+# (GATE RUSH e le altre app hanno un altro titolo: non vengono mai toccate.)
+function Find-Url($node) {
+  if ($null -eq $node) { return $null }
+  if ($node -is [string]) { if ($node -match 'https://[a-z0-9-]+\.srstudio\.dev') { return $Matches[0] } ; return $null }
+  if ($node -is [System.Array]) { foreach ($item in $node) { $u = Find-Url $item; if ($u) { return $u } }; return $null }
+  if ($node -is [System.Management.Automation.PSCustomObject]) { foreach ($p in $node.PSObject.Properties) { $u = Find-Url $p.Value; if ($u) { return $u } } }
+  return $null
+}
 if (-not (Test-Path $Config)) {
-  Step "Il gioco e' gia' online: $KnownOrigin"
-  Write-Host "In questa cartella manca deploy\wen-azulejo.config.json (la scheda della tua app)."
-  Write-Host "Incolla l'App ID del gioco online (lo trovi su https://studio.superrare.com nella pagina dell'app, o nella"
-  Write-Host "finestra della prima pubblicazione). Scrivi NUOVA solo se vuoi davvero creare un'altra app."
-  while (-not (Test-Path $Config)) {
-    $typed = "$(Read-Host 'App ID')".Trim()
-    if ($typed -eq 'NUOVA') { break }
-    if ($typed -notmatch '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$') { Write-Host 'Non e'' un App ID (8-4-4-4-12 caratteri). Riprova.' -ForegroundColor Yellow; continue }
-    Run 'npx' @('tsx', 'scripts/wen-azulejo-config.ts', '--app-id', $typed, '--origin', $KnownOrigin) 'La scrittura della configurazione'
+  Step 'Cerco sul tuo account le app WEN AZULEJO gia'' create'
+  $mine = Invoke-Rare @('product', 'list')
+  if ($null -eq $mine -or -not $mine.ok) {
+    Write-Host 'Serve il login: approva nel browser il codice che compare qui sotto.' -ForegroundColor Yellow
+    Run 'rare-profile' @('login') 'Il login'
+    $mine = Invoke-Rare @('product', 'list')
+    if ($null -eq $mine -or -not $mine.ok) { Fail "Non riesco a leggere i tuoi prodotti su SuperRare Studio. Risposta: $script:CliRaw" }
+  }
+  $games = @(Find-WithId $mine.data | Where-Object {
+    $label = "$($_.title) $($_.name) $($_.slug)"
+    $label -match 'AZULEJO' -and "$($_.id)" -match '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+  })
+  if ($games.Count -gt 0) {
+    Write-Host "Ho trovato $($games.Count) app WEN AZULEJO sul tuo account:"
+    for ($i = 0; $i -lt $games.Count; $i++) {
+      $g = $games[$i]; $title = @($g.title, $g.name, $g.slug) | Where-Object { $_ } | Select-Object -First 1
+      $u = Find-Url $g; if (-not $u) { $u = '(indirizzo non indicato)' }
+      Write-Host ("  {0}) {1}  |  {2}  |  App ID {3}" -f ($i + 1), $title, $u, $g.id)
+    }
+    Write-Host 'Scrivi il numero dell''app da aggiornare (quella con l''indirizzo del tuo gioco), oppure NUOVA per crearne un''altra.'
+    while (-not (Test-Path $Config)) {
+      $typed = "$(Read-Host 'Numero')".Trim()
+      if ($typed -eq 'NUOVA') { break }
+      $n = 0
+      if (-not [int]::TryParse($typed, [ref]$n) -or $n -lt 1 -or $n -gt $games.Count) { Write-Host "Scrivi un numero da 1 a $($games.Count)." -ForegroundColor Yellow; continue }
+      $chosen = $games[$n - 1]; $origin = Find-Url $chosen
+      while (-not $origin) {
+        $typedUrl = "$(Read-Host 'Indirizzo del gioco (https://xxxxxxxx.srstudio.dev)')".Trim().TrimEnd('/')
+        if ($typedUrl -match '^https://[a-z0-9-]+\.srstudio\.dev$') { $origin = $typedUrl } else { Write-Host 'Non e'' un indirizzo srstudio.dev. Riprova.' -ForegroundColor Yellow }
+      }
+      Run 'npx' @('tsx', 'scripts/wen-azulejo-config.ts', '--app-id', "$($chosen.id)", '--origin', $origin) 'La scrittura della configurazione'
+    }
   }
 }
 if (-not (Test-Path $Config)) {
