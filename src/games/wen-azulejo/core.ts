@@ -6,8 +6,10 @@
 // colour, the circle closes: a ROSETTE. It scores, and its four tiles are relaid with new ones half a second later (which
 // may close new rosettes by themselves: a cascade). Every tile takes three turns; a fourth turn that closes nothing cracks
 // it. Now and then a tile comes LOOSE (SOS Azulejo): put it in a rosette before it falls, or the wall cracks. Golden
-// tiles carry a name of the wall: a rosette with one PAINTS that name on the wall (bonus, and a crack repaired). Twelve
-// cracks and the wall crumbles. 90 s; every 22.5 s the colours grow (3, 4, 4, 5), and tiles come loose more and more often
+// tiles carry a name of the wall: a rosette with one PAINTS that name on the wall (bonus, and a crack repaired). Now and
+// then a SARDINHA comes in (the sardine of Lisbon's Santo António festival): a joker, any colour at a junction. A rosette
+// with it starts the FESTA: 6 s of double points in which no tile comes loose or falls. One turn that closes two or three
+// rosettes at once multiplies each by two or three. Twelve cracks and the wall crumbles. 90 s; every 22.5 s the colours grow (3, 4, 4, 5), and tiles come loose more and more often
 // with less and less time to save them. Holding the wall the whole 90 s pays a big bonus.
 //
 // Integer arithmetic only, a seeded generator (src/common/det.ts), a state that round-trips through JSON exactly, no
@@ -40,6 +42,11 @@ export const RULES = {
   graceStart: 150, graceEnd: 66,
   /** Chance (out of 100) that a new tile is golden (carries a name of the wall); at most namesMax on the wall at once. */
   nameChance: 5, namesMax: 3,
+  /** Chance (out of 1000) that a relaid tile is a sardinha (a joker); at most sardineMax on the wall at once, none while
+   *  the festa lasts. */
+  sardinePerMille: 15, sardineMax: 1,
+  /** A rosette with the sardinha: the festa, festaTicks of points × festaMult, no tile coming loose or falling. */
+  festaTicks: 120, festaMult: 2,
   maxCracks: 12,
   rosette: 100,                               // × the multiplier
   rescued: 50,                                // each loose tile saved by a rosette
@@ -51,8 +58,10 @@ export const RULES = {
 };
 export const PHASES = RULES.colors.length;
 /** rosette: four corners of one colour closed by a turn · cascade: closed by new tiles laid by themselves · spin: a tile
- *  turned once too often, cracked · fall: a loose tile not saved in time. */
-export const WHATS = ['rosette', 'cascade', 'spin', 'fall'] as const;
+ *  turned once too often, cracked · fall: a loose tile not saved in time · festa: a rosette with the sardinha. */
+export const WHATS = ['rosette', 'cascade', 'spin', 'fall', 'festa'] as const;
+/** A plain tile, or the sardinha (a joker: any colour at a junction; it does not turn). */
+export const PLAIN = 0, SARDINHA = 1;
 export type What = (typeof WHATS)[number];
 
 /* ============================ TYPES & VALIDATION ============================= */
@@ -71,12 +80,16 @@ export type Tile = {
   loose: number;
   /** The tick it is laid at: before that its slot is empty (being relaid). */
   at: number;
+  /** PLAIN or SARDINHA. */
+  kind: number;
 };
 export type AzEvent = { seq: number; tick: number; what: What; color: number; vertex: number; cells: number[]; panels: number[]; gain: number };
 export type End = 'none' | 'time' | 'cracked' | 'horizon';
 export type Play = {
   score: number; combo: number; bestCombo: number; lastMade: number;
   cracks: number; made: number; cascades: number; spun: number; fallen: number; rescued: number; bonus: number; end: End;
+  /** The tick the festa ends at (0: none yet), and how many festas. */
+  festaUntil: number; festas: number;
   tiles: Tile[];
   nextId: number; nextLoose: number; looseCount: number; eventSeq: number;
   events: AzEvent[];
@@ -117,16 +130,17 @@ export function parseInput(value: unknown): AzInput | null {
   }
   return null;
 }
-const TILE_KEYS = ['id', 'c', 'panel', 'turns', 'loose', 'at'] as const;
+const TILE_KEYS = ['id', 'c', 'panel', 'turns', 'loose', 'at', 'kind'] as const;
 const EVENT_KEYS = ['seq', 'tick', 'what', 'color', 'vertex', 'cells', 'panels', 'gain'] as const;
-const PLAY_KEYS = ['score', 'combo', 'bestCombo', 'lastMade', 'cracks', 'made', 'cascades', 'spun', 'fallen', 'rescued', 'bonus', 'end', 'tiles',
-  'nextId', 'nextLoose', 'looseCount', 'eventSeq', 'events', 'mosaic', 'painted'] as const;
+const PLAY_KEYS = ['score', 'combo', 'bestCombo', 'lastMade', 'cracks', 'made', 'cascades', 'spun', 'fallen', 'rescued', 'bonus', 'end', 'festaUntil',
+  'festas', 'tiles', 'nextId', 'nextLoose', 'looseCount', 'eventSeq', 'events', 'mosaic', 'painted'] as const;
 const STATE_KEYS = ['tick', 'gameOver', 'started', 'startTick', 'seed', 'rules', 'play'] as const;
 function checkTile(t: unknown): Tile {
   if (!isObject(t) || !exactKeys(t, TILE_KEYS)) return fail('tile');
   if (!isInt(t.id, 1, MAX_ID) || !intList(t.c, 4, 0, COLORS.length - 1) || t.c.length !== 4 || !isInt(t.panel, 0, 550)
-    || !isInt(t.turns, 0, RULES.maxTurns) || !isInt(t.loose, 0, MAX_INT) || !isInt(t.at, 0, MAX_INT)) return fail('tile');
-  return { id: t.id, c: t.c.slice(), panel: t.panel, turns: t.turns, loose: t.loose, at: t.at };
+    || !isInt(t.turns, 0, RULES.maxTurns) || !isInt(t.loose, 0, MAX_INT) || !isInt(t.at, 0, MAX_INT) || !isInt(t.kind, PLAIN, SARDINHA)
+    || (t.kind === SARDINHA && (t.panel !== 0 || t.turns !== 0))) return fail('tile');
+  return { id: t.id, c: t.c.slice(), panel: t.panel, turns: t.turns, loose: t.loose, at: t.at, kind: t.kind };
 }
 function checkEvent(e: unknown): AzEvent {
   if (!isObject(e) || !exactKeys(e, EVENT_KEYS)) return fail('event');
@@ -139,7 +153,8 @@ export function checkState(value: unknown): AzState {
   if (!isObject(value) || !exactKeys(value, STATE_KEYS)) return fail('state');
   const p = value.play;
   if (!isObject(p) || !exactKeys(p, PLAY_KEYS)) return fail('state');
-  for (const k of ['score', 'combo', 'bestCombo', 'made', 'cascades', 'spun', 'fallen', 'rescued', 'bonus', 'nextLoose', 'looseCount', 'eventSeq'] as const) {
+  for (const k of ['score', 'combo', 'bestCombo', 'made', 'cascades', 'spun', 'fallen', 'rescued', 'bonus', 'nextLoose', 'looseCount', 'eventSeq',
+    'festaUntil', 'festas'] as const) {
     if (!isInt(p[k], 0, MAX_INT)) return fail('state');
   }
   if (!isInt(p.lastMade, -1, MAX_INT) || !isInt(p.cracks, 0, RULES.maxCracks) || !oneOf(p.end, ['none', 'time', 'cracked', 'horizon'] as const)
@@ -160,13 +175,14 @@ export function checkState(value: unknown): AzState {
     || (p.lastMade as number) > tick || new Set(wall.map((t) => t.id)).size !== CELLS || wall.some((t) => t.id >= (p.nextId as number))
     || wall.some((t) => t.at > tick + RULES.refillTicks || (t.loose > 0 && (!started || (!gameOver && t.loose <= tick))))
     || new Set(named).size !== named.length || named.some((x) => painted.includes(x)) || named.length > RULES.namesMax
+    || wall.filter((t) => t.kind === SARDINHA).length > RULES.sardineMax || (p.festaUntil as number) > tick + RULES.festaTicks
     || log.some((e) => e.seq > (p.eventSeq as number) || e.tick > tick)) return fail('timeline');
   return {
     tick, gameOver, started, startTick, seed, rules,
     play: {
       score: p.score as number, combo: p.combo as number, bestCombo: p.bestCombo as number, lastMade: p.lastMade, cracks: p.cracks,
       made: p.made as number, cascades: p.cascades as number, spun: p.spun as number, fallen: p.fallen as number, rescued: p.rescued as number,
-      bonus: p.bonus as number, end: p.end, tiles: wall, nextId: p.nextId, nextLoose: p.nextLoose as number, looseCount: p.looseCount as number,
+      bonus: p.bonus as number, end: p.end, festaUntil: p.festaUntil as number, festas: p.festas as number, tiles: wall, nextId: p.nextId, nextLoose: p.nextLoose as number, looseCount: p.looseCount as number,
       eventSeq: p.eventSeq as number, events: log, mosaic: mosaic.slice(), painted: painted.slice(),
     },
   };
@@ -213,25 +229,30 @@ export function createEngine(panels: readonly NamedPanel[]) {
   const multOf = (combo: number): number => 1 + Math.min(RULES.multCap - 1, Math.floor(combo / RULES.comboEvery));
   /** A tile is on the wall (laid) at this tick. */
   const laid = (t: Tile, tick: number): boolean => t.at <= tick;
-  /** The colour closed at a junction, or -1. */
+  /** The colour closed at a junction, or -1. A sardinha is any colour. */
   function closedAt(play: Play, vertex: number, tick: number): number {
-    const corners = cornersOf(vertex);
-    const first = play.tiles[(corners[0] as [number, number])[0]] as Tile;
-    if (!laid(first, tick)) return -1;
-    const color = first.c[2] as number;
-    for (const [cell, k] of corners) { const t = play.tiles[cell] as Tile; if (!laid(t, tick) || t.c[k] !== color) return -1; }
+    let color = -1;
+    for (const [cell, k] of cornersOf(vertex)) {
+      const t = play.tiles[cell] as Tile;
+      if (!laid(t, tick)) return -1;
+      if (t.kind === SARDINHA) continue;
+      if (color < 0) color = t.c[k] as number;
+      else if (t.c[k] !== color) return -1;
+    }
     return color;
   }
+  /** Points are doubled while the festa lasts. */
+  const festaOn = (play: Play, tick: number): boolean => tick < play.festaUntil;
 
   /** Tile number `id`, laid at `at`, in the glazes of the phase of `colorTick`. `avoid` re-rolls it (deterministically)
    *  while it would close a rosette with the laid tiles above and to its left (the opening wall starts with none). */
   function makeTile(state: AzState, id: number, at: number, colorTick: number, cell: number, avoid: boolean): Tile {
     const play = state.play, k = colorsAt(state, colorTick);
-    let c: number[] = [0, 0, 0, 0], rName = 0, rWho = 0;
+    let c: number[] = [0, 0, 0, 0], rName = 0, rWho = 0, rSard = 1;
     for (let salt = 0; salt < 16; salt++) {
       const rnd = mulberry32(fnv1a(`tile:${state.seed}:${id}:${salt}`));
       c = [0, 1, 2, 3].map(() => Math.floor(rnd() * k));
-      rName = rnd(); rWho = rnd();
+      rName = rnd(); rWho = rnd(); rSard = rnd();
       if (!avoid) break;
       const col = colOf(cell), row = rowOf(cell);
       if (col === 0 || row === 0) break;
@@ -240,8 +261,13 @@ export function createEngine(panels: readonly NamedPanel[]) {
       const same = corners.filter(([x]) => x !== cell).every(([x, q]) => (play.tiles[x] as Tile).c[q] === c[0]);
       if (!same) break;
     }
+    // a sardinha: only among the relaid tiles (never on the opening wall), one on the wall at a time
+    const sardines = play.tiles.filter((t, x) => x !== cell && t.kind === SARDINHA).length;
+    if (!avoid && Math.floor(rSard * 1000) < RULES.sardinePerMille && sardines < RULES.sardineMax && !festaOn(play, state.tick)) {
+      return { id, c: [0, 0, 0, 0], panel: 0, turns: 0, loose: 0, at, kind: SARDINHA };
+    }
     let panel = 0;
-    const onWall = play.tiles.filter((t) => t && t.panel > 0).map((t) => t.panel);
+    const onWall = play.tiles.filter((t, x) => x !== cell && t.panel > 0).map((t) => t.panel);
     if (Math.floor(rName * 100) < RULES.nameChance && onWall.length < RULES.namesMax && play.painted.length < RULES.paintedMax) {
       // a name not painted yet and not already on the wall (the next one in the pool otherwise); none left: a plain tile
       const busy = new Set([...play.painted, ...onWall]);
@@ -249,7 +275,7 @@ export function createEngine(panels: readonly NamedPanel[]) {
       for (let n = 0; n < pool.length && busy.has(pool[i] as number); n++) i = (i + 1) % pool.length;
       if (!busy.has(pool[i] as number)) panel = pool[i] as number;
     }
-    return { id, c, panel, turns: 0, loose: 0, at };
+    return { id, c, panel, turns: 0, loose: 0, at, kind: PLAIN };
   }
   /** Relays the tile of a slot: a new one, laid refillTicks from now. */
   function relay(state: AzState, cell: number): void {
@@ -275,8 +301,18 @@ export function createEngine(panels: readonly NamedPanel[]) {
     const play = state.play;
     if (play.combo > 0 && state.tick - play.lastMade > RULES.comboWindow) play.combo = 0;
   }
-  /** Closes every rosette at these junctions (each once), then relays their tiles. */
-  function close(state: AzState, vertices: number[], what: 'rosette' | 'cascade'): void {
+  /** The festa starts (or goes on): loose tiles and the next one to come loose wait for it to end. */
+  function festa(state: AzState, cell: number, vertex: number): void {
+    const play = state.play, tick = state.tick;
+    const until = tick + RULES.festaTicks, pause = until - Math.max(tick, play.festaUntil);
+    for (const t of play.tiles) if (t.loose > 0) t.loose += pause;
+    play.nextLoose = Math.max(play.nextLoose, tick) + pause;
+    play.festaUntil = until; play.festas++;
+    event(state, 'festa', -1, vertex, [cell], [], 0);
+  }
+  /** Closes every rosette at these junctions (each once), then relays their tiles. `times` multiplies each rosette: the
+   *  number of rosettes one turn closed at once (a double, a triple). */
+  function close(state: AzState, vertices: number[], what: 'rosette' | 'cascade', times = 1): void {
     const play = state.play, tick = state.tick, gone = new Set<number>();
     for (const v of [...new Set(vertices)].sort((a, b) => a - b)) {
       const color = closedAt(play, v, tick);
@@ -286,7 +322,10 @@ export function createEngine(panels: readonly NamedPanel[]) {
       const tiles = fresh.map((cell) => play.tiles[cell] as Tile);
       const names = tiles.filter((t) => t.panel > 0).map((t) => t.panel);
       const saved = tiles.filter((t) => t.loose > 0).length;
-      const gain = RULES.rosette * multOf(play.combo) + RULES.rescued * saved + RULES.painted * names.length;
+      const sardine = fresh.find((cell) => (play.tiles[cell] as Tile).kind === SARDINHA);
+      if (sardine !== undefined) festa(state, sardine, v);
+      const gain = (RULES.rosette * multOf(play.combo) * times + RULES.rescued * saved + RULES.painted * names.length)
+        * (festaOn(play, tick) ? RULES.festaMult : 1);
       play.score += gain; play.made++; play.combo++; play.lastMade = tick; play.rescued += saved;
       if (what === 'cascade') play.cascades++;
       if (play.combo > play.bestCombo) play.bestCombo = play.combo;
@@ -294,7 +333,7 @@ export function createEngine(panels: readonly NamedPanel[]) {
       play.mosaic.push(color);
       if (play.mosaic.length > RULES.mosaicMax) play.mosaic.shift();
       for (const n of names) if (play.painted.length < RULES.paintedMax) play.painted.push(n);
-      for (const t of tiles) { t.loose = 0; t.panel = 0; }
+      for (const t of tiles) { t.loose = 0; t.panel = 0; t.kind = PLAIN; }
       for (const cell of cells) gone.add(cell);
       event(state, what, color, v, cells, names, gain);
     }
@@ -362,11 +401,11 @@ export function createEngine(panels: readonly NamedPanel[]) {
     const play = state.play, tick = state.tick;
     const tile = play.tiles[cell] as Tile;
     // a tile that left this slot a moment ago (a rosette, a fall) or is not laid yet: nothing happens
-    if (tile.id !== id || !laid(tile, tick)) return;
+    if (tile.id !== id || !laid(tile, tick) || tile.kind === SARDINHA) return;
     settleCombo(state);
     tile.c = turned(tile.c);
     const closing = verticesOf(cell).filter((v) => closedAt(play, v, tick) >= 0);
-    if (closing.length) { close(state, closing, 'rosette'); return; }
+    if (closing.length) { close(state, closing, 'rosette', closing.length); return; }
     if (tile.turns < RULES.maxTurns) { tile.turns++; return; }
     // one turn too many: the tile cracks
     play.spun++;
@@ -383,7 +422,7 @@ export function createEngine(panels: readonly NamedPanel[]) {
       tick: 0, gameOver: false, started: false, startTick: null, seed: validSeed, rules,
       play: {
         score: 0, combo: 0, bestCombo: 0, lastMade: -1, cracks: 0, made: 0, cascades: 0, spun: 0, fallen: 0, rescued: 0, bonus: 0, end: 'none',
-        tiles: [], nextId: 1, nextLoose: 0, looseCount: 0, eventSeq: 0, events: [], mosaic: [], painted: [],
+        festaUntil: 0, festas: 0, tiles: [], nextId: 1, nextLoose: 0, looseCount: 0, eventSeq: 0, events: [], mosaic: [], painted: [],
       },
     };
     // the opening wall: every slot laid, in the first phase's glazes, with no rosette closed yet
@@ -419,7 +458,7 @@ export function createEngine(panels: readonly NamedPanel[]) {
 
   return {
     createRun, advance, applyInput, view, isFinished, score,
-    advanceInPlace, applyInputInPlace, clone, endTickOf, openTickOf, phaseAt, colorsAt, looseAt, graceAt, multOf, closedAt, laid, pool,
+    advanceInPlace, applyInputInPlace, clone, endTickOf, openTickOf, phaseAt, colorsAt, looseAt, graceAt, multOf, closedAt, laid, festaOn, pool,
   };
 }
 export type AzulejoEngine = ReturnType<typeof createEngine>;

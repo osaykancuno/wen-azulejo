@@ -14,6 +14,9 @@ a colour, the circle closes: a **rosette**.
 | Turns | each tile takes 3 turns; a 4th turn that closes nothing cracks it: −30 and a crack |
 | SOS Azulejo | now and then a tile comes loose and shakes: put it in a rosette before it falls (+50), or it falls: −30 and a crack |
 | Golden tile | carries a name of the wall: a rosette with it PAINTS the name on the wall (+200, one crack repaired). Each name once per run, 3 on the wall at most |
+| Sardinha | the sardine of Lisbon's Santo António festival: a joker, any colour at a junction (it does not turn). A rosette with it starts the **festa** |
+| Festa | 6 s of double points, with no tile coming loose or falling; paper bunting across the wall |
+| Double, triple | one turn that closes two or three rosettes at once multiplies each by two or three |
 | Cracks | 12 and the wall crumbles: the run ends, no bonus |
 | Survival | hold the wall 90 s: +2000 and +150 per crack left |
 

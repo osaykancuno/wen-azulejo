@@ -18,7 +18,7 @@ import { fitTweet, intentHref, tag } from '../../share/post.js';
 import { WALL_PANELS } from '../../generated/wall.js';
 import { fnv1a } from '../../common/det.js';
 import {
-  CELLS, COLS, ROWS, RULES, VCOLS, VERTS, cornersOf, engine, inputSchema, snapshotSchema, stateSchema,
+  CELLS, COLS, ROWS, RULES, SARDINHA, VCOLS, VERTS, cornersOf, engine, inputSchema, snapshotSchema, stateSchema,
   type AzEvent, type AzState, type Tile, type What,
 } from './engine.js';
 
@@ -50,7 +50,9 @@ const SAYS: Record<What, readonly string[]> = {
   cascade: ['CASCATA!', 'FREE ROSETTE', 'LUCKY TILE'],
   spin: ['RODOU DEMAIS!', 'TOO MUCH SPIN', 'NGMI', 'AI AI AI'],
   fall: ['SOS!', 'CRACK!', 'RIP AZULEJO'],
+  festa: ['FESTA!', 'SARDINHAS!', 'SANTO ANTÓNIO!'],
 };
+const MULTI_BANNERS = ['', '', 'ROSETA DUPLA! ×2', 'ROSETA TRIPLA! ×3', 'QUADRUPLA!! ×4'];
 const PHASE_BANNERS = ['BOM DIA, LISBOA!', 'NEW GLAZE: MANGANÊS', 'SOS AZULEJO!', 'LAST CALL · 5 GLAZES'];
 const COMBO_BANNERS = ['', '×2 LINDO', '×3 BELÍSSIMO', '×4 OBRA-PRIMA'];
 /** Best practice score on this device (the best real score is the page's own: the leaderboard, then this device). */
@@ -68,6 +70,7 @@ type Walker = { panel: number; x: number; dir: 1 | -1; speed: number; lane: numb
 export function setterTitle(play: AzState['play']): { title: string; line: string; good: boolean } {
   if (play.end === 'time') {
     if (play.cracks === 0) return { title: 'MESTRE AZULEJEIRO', line: 'Ninety seconds, not a single crack in the wall.', good: true };
+    if (play.festas >= 3) return { title: 'REI DO ARRAIAL', line: `${play.festas} festas: the sardines love you.`, good: true };
     if (play.painted.length >= 12) return { title: 'PAINTER OF THE WALL', line: `${play.painted.length} names painted on the wall.`, good: true };
     if (play.rescued >= 25) return { title: 'SOS HERO', line: `${play.rescued} loose tiles saved before they fell.`, good: true };
     if (play.bestCombo >= 15) return { title: 'ROSETTE MACHINE', line: `${play.bestCombo} rosettes in a row.`, good: true };
@@ -119,6 +122,29 @@ function drawRosette(g: CanvasRenderingContext2D, color: number, x: number, y: n
   g.fillStyle = GLAZE; g.beginPath(); g.arc(x, y, R * 0.12, 0, Math.PI * 2); g.fill();
 }
 
+/** The sardinha (Santo António's sardine), the joker: corners in every glaze, a silver sardine across the tile. */
+function drawSardine(g: CanvasRenderingContext2D, x: number, y: number, s: number, now = 0): void {
+  g.fillStyle = '#FFF6DC'; g.fillRect(x, y, s, s);
+  const R = s * 0.44;
+  const corners: [number, number, number][] = [[x, y, 0], [x + s, y, Math.PI / 2], [x + s, y + s, Math.PI], [x, y + s, Math.PI * 1.5]];
+  for (const [cx, cy, a] of corners) {
+    for (let k = 0; k < INKS.length; k++) {
+      g.fillStyle = INKS[k] as string;
+      g.beginPath(); g.moveTo(cx, cy); g.arc(cx, cy, R, a + (k * Math.PI) / 2 / INKS.length, a + ((k + 1) * Math.PI) / 2 / INKS.length); g.closePath(); g.fill();
+    }
+  }
+  // the sardine, swimming a little
+  const cx = x + s / 2, cy = y + s / 2 + Math.sin(now / 160) * s * 0.02;
+  g.save(); g.translate(cx, cy); g.rotate(-0.35 + Math.sin(now / 220) * 0.06);
+  g.fillStyle = '#9FB4C7'; g.beginPath(); g.ellipse(0, 0, s * 0.3, s * 0.1, 0, 0, Math.PI * 2); g.fill();
+  g.fillStyle = '#5E7A93'; g.beginPath(); g.ellipse(0, -s * 0.03, s * 0.28, s * 0.045, 0, 0, Math.PI * 2); g.fill();
+  g.fillStyle = '#9FB4C7'; g.beginPath(); g.moveTo(s * 0.26, 0); g.lineTo(s * 0.4, -s * 0.09); g.lineTo(s * 0.4, s * 0.09); g.closePath(); g.fill();
+  g.fillStyle = '#0B0B0B'; g.beginPath(); g.arc(-s * 0.2, -s * 0.02, s * 0.022, 0, Math.PI * 2); g.fill();
+  g.strokeStyle = '#5E7A93'; g.lineWidth = Math.max(1, s / 50); g.beginPath(); g.arc(-s * 0.15, 0, s * 0.06, -0.9, 0.9); g.stroke();
+  g.restore();
+  g.strokeStyle = '#D9A62E'; g.lineWidth = Math.max(2, s / 22); g.strokeRect(x + 2, y + 2, s - 4, s - 4);
+}
+
 /* ------------------------------ a pixel stand-in ------------------------------ */
 // A person of the wall without a character yet: a 16 × 16 pixel figure, colours from their name, four walking steps.
 const SKIN = ['#F1C9A5', '#D9A47E', '#A8714F', '#6B4430', '#E8B98F'];
@@ -160,12 +186,17 @@ function beep(freqs: number[], len = 0.08, type: OscillatorType = 'square', gain
     }
   } catch { /* no sound on this device */ }
 }
+/** Each rosette in a streak sounds a little higher (a semitone a step, an octave at most). */
+let pitch = 1;
 const SOUNDS: Record<What, (e: AzEvent) => void> = {
-  rosette: (e) => beep(e.panels.length ? [523, 659, 784, 1047] : [523, 659, 784], 0.07, 'triangle', 0.05),
+  rosette: (e) => beep((e.panels.length ? [523, 659, 784, 1047] : [523, 659, 784]).map((f) => f * pitch), 0.07, 'triangle', 0.05),
   cascade: () => beep([784, 988, 1175], 0.06, 'triangle', 0.04),
   spin: () => beep([200, 140], 0.14, 'sawtooth', 0.06),
   fall: () => beep([300, 180, 120], 0.08, 'square', 0.04),
+  festa: () => beep([523, 659, 784, 1047, 784, 1047, 1319], 0.06, 'square', 0.045),
 };
+/** A short buzz on phones that have one (display only). */
+function buzz(pattern: number | number[]): void { try { navigator.vibrate?.(pattern); } catch { /* no vibration here */ } }
 
 function createStage(host: HTMLElement, io: StageIO): Stage {
   host.classList.add('az-arena', 'own-end');
@@ -205,13 +236,14 @@ function createStage(host: HTMLElement, io: StageIO): Stage {
   let pressed: { cell: number; t0: number } | null = null;
   let banner: { text: string; t0: number; gold: boolean } | null = null;
   let lastPhase = -2, shake = 0, flash = 0, lastCount = -1;
+  let shownScore = 0, multiShown = -1;              // the score as it counts up; the last tick a double was announced
   let endStats: EndStats | null = null;
   let dirty = true, DPR = 1;
   let hits = new HitFeed('wen-azulejo', false);
 
   function reset(isPractice: boolean): void {
     view = null; shown = null; nowTick = 0; seen = new Map(); pops = []; bits = []; ghosts = []; blooms = []; walkers = []; signs = [];
-    faces = new Map(); pressed = null; banner = null; lastPhase = -2; shake = 0; flash = 0; lastCount = -1;
+    faces = new Map(); pressed = null; banner = null; lastPhase = -2; shake = 0; flash = 0; lastCount = -1; shownScore = 0; multiShown = -1;
     finalScore = null; endStats = null; practice = isPractice;
     hits = new HitFeed('wen-azulejo', isPractice ? false : undefined);
   }
@@ -241,6 +273,7 @@ function createStage(host: HTMLElement, io: StageIO): Stage {
     const cell = row * COLS + col, tile = shown.play.tiles[cell];
     if (!tile || tile.at > nowTick) return;
     pressed = { cell, t0: performance.now() };
+    if (tile.kind === SARDINHA) { beep([880, 1175], 0.04, 'triangle', 0.03); return; }   // the joker does not turn
     beep([330 + tile.turns * 70], 0.04, 'triangle', 0.035);
     io.sendInput({ action: 'turn', cell, id: tile.id });
   }
@@ -266,14 +299,26 @@ function createStage(host: HTMLElement, io: StageIO): Stage {
     if (s.gameOver) hits.flush();
   }
   function onEvent(e: AzEvent, s: AzState, prev: AzState | null): void {
+    pitch = Math.pow(2, Math.min(12, s.play.combo) / 12);
     SOUNDS[e.what](e);
     const now = performance.now();
+    if (e.what === 'festa') {
+      banner = { text: `FESTA! ×${RULES.festaMult} · ${Math.round(RULES.festaTicks * TICK_MS / 1000)} S`, t0: now, gold: true };
+      burst(W / 2, GY + 40, 60, INKS, 1.4); buzz([20, 40, 20]);
+      return;
+    }
     // the tiles that left: as they were just before (the previous state shown), else in the event's colour
     const oldFace = (cell: number): number[] => {
       const t = prev?.play.tiles[cell];
       return t && t.at <= nowTick ? t.c.slice() : [Math.max(0, e.color), Math.max(0, e.color), Math.max(0, e.color), Math.max(0, e.color)];
     };
     if (e.what === 'rosette' || e.what === 'cascade') {
+      buzz(12);
+      // one turn, two or three rosettes: say it big
+      const together = s.play.events.filter((x) => x.what === 'rosette' && x.tick === e.tick).length;
+      if (e.what === 'rosette' && together >= 2 && multiShown !== e.tick) {
+        multiShown = e.tick; banner = { text: MULTI_BANNERS[Math.min(4, together)] as string, t0: now, gold: true }; shake = 0.5;
+      }
       blooms.push({ v: e.vertex, color: e.color, t0: now });
       e.cells.forEach((cell, i) => ghosts.push({ cell, c: oldFace(cell), t0: now, kind: 'made', delay: 120 + i * 40 }));
       burst(vertX(e.vertex), vertY(e.vertex), 18, [INKS[e.color] as string, GLAZE, BLUE]);
@@ -295,7 +340,7 @@ function createStage(host: HTMLElement, io: StageIO): Stage {
         ghosts.push({ cell, c: oldFace(cell), t0: now, kind: e.what === 'fall' ? 'fall' : 'spin', delay: 0 });
         burst(cellX(cell), cellY(cell) + 20, 14, [RED, GLAZE, '#8C8A84'], 0.8);
       }
-      shake = e.what === 'spin' ? 1 : 0.6; flash = e.what === 'spin' ? 1 : 0.5;
+      shake = e.what === 'spin' ? 1 : 0.6; flash = e.what === 'spin' ? 1 : 0.5; buzz(45);
     }
   }
   /** The state shown: the latest one, brought to the estimated server tick by the rules themselves. */
@@ -348,9 +393,16 @@ function createStage(host: HTMLElement, io: StageIO): Stage {
     const left = Math.max(0, Math.min(1, (end - Math.max(nowTick, open)) / RULES.playTicks));
     ctx.fillStyle = '#2A2927'; ctx.fillRect(W / 2 - 60, 50, 120, 4); ctx.fillStyle = urgent ? GOLD : BLUE; ctx.fillRect(W / 2 - 60, 50, 120 * left, 4);
     const t = Math.max(nowTick, open), speed = RULES.looseStart / engine.looseAt(s, t);
-    text(`${engine.colorsAt(s, t)} GLAZES · SOS ×${speed.toFixed(1)}`, W / 2, 70, `500 11px ${F_MONO}`, speed >= 2 ? GOLD : '#B0ACA2');
+    if (engine.festaOn(s.play, nowTick)) {
+      const left = (s.play.festaUntil - nowTick) / RULES.festaTicks;
+      text(`FESTA ×${RULES.festaMult} · ${Math.ceil((s.play.festaUntil - nowTick) * TICK_MS / 1000)} S`, W / 2, 70, `500 12px ${F_MONO}`, GOLD);
+      ctx.fillStyle = GOLD; ctx.fillRect(W / 2 - 60, 82, 120 * left, 3);
+    } else text(`${engine.colorsAt(s, t)} GLAZES · SOS ×${speed.toFixed(1)}`, W / 2, 70, `500 11px ${F_MONO}`, speed >= 2 ? GOLD : '#B0ACA2');
     // the score sits low on the left: the page's own ← and PRACTICE tag take the top-left corner
-    text(fmtScore(s.play.score), 14, 64, `30px ${F_ANTON}`, CHALK, 'left');
+    shownScore += (s.play.score - shownScore) * 0.18;
+    if (Math.abs(s.play.score - shownScore) < 1) shownScore = s.play.score;
+    const festa = engine.festaOn(s.play, nowTick);
+    text(fmtScore(Math.round(shownScore)), 14, 64, `30px ${F_ANTON}`, festa ? GOLD : CHALK, 'left');
     const mult = engine.multOf(s.play.combo);
     if (s.play.combo >= 2) text(`${mult > 1 ? `×${mult} · ` : ''}${s.play.combo} IN A ROW`, 14, 88, `500 10px ${F_MONO}`, mult > 1 ? GOLD : '#B0ACA2', 'left');
     for (let i = 0; i < RULES.maxCracks; i++) crackIcon(W - 26 - (i % 6) * 16, 10 + Math.floor(i / 6) * 16, i < s.play.cracks);
@@ -380,7 +432,7 @@ function createStage(host: HTMLElement, io: StageIO): Stage {
     ctx.globalAlpha = 0.3 + 0.7 * land;
     ctx.rotate(-(1 - ease) * Math.PI / 2 + (loose ? wobble * 0.02 : 0));
     const s = CELL * (1 - press * 0.06);
-    drawTile(ctx, t.c, -s / 2, -s / 2, s);
+    if (t.kind === SARDINHA) drawSardine(ctx, -s / 2, -s / 2, s, now); else drawTile(ctx, t.c, -s / 2, -s / 2, s);
     ctx.restore();
     ctx.save();
     ctx.translate(x, y);
@@ -391,7 +443,7 @@ function createStage(host: HTMLElement, io: StageIO): Stage {
       text(name, CELL / 2, CELL / 2, fitFont(name, CELL - 16, 10, F_MONO), GOLD);
     }
     // once it has turned: the turns it still takes, three dots under the star (red when spent; all red = the next cracks it)
-    if (t.turns > 0) {
+    if (t.turns > 0 && t.kind !== SARDINHA) {
       for (let k = 0; k < RULES.maxTurns; k++) {
         ctx.fillStyle = k < RULES.maxTurns - t.turns ? INK : RED;
         ctx.beginPath(); ctx.arc(CELL / 2 - 8 + k * 8, CELL / 2 + 13, 2.6, 0, Math.PI * 2); ctx.fill();
@@ -411,16 +463,37 @@ function createStage(host: HTMLElement, io: StageIO): Stage {
     ctx.save(); ctx.setLineDash([3, 4]); ctx.lineWidth = 2;
     for (let v = 0; v < VERTS; v++) {
       const counts = new Map<number, number>();
-      let ok = true;
+      let ok = true, wild = 0;
       for (const [cell, k] of cornersOf(v)) {
         const t = s.play.tiles[cell] as Tile;
         if (t.at > nowTick) { ok = false; break; }
+        if (t.kind === SARDINHA) { wild++; continue; }
         counts.set(t.c[k] as number, (counts.get(t.c[k] as number) ?? 0) + 1);
       }
       if (!ok) continue;
-      for (const [color, n] of counts) if (n === 3) {
+      for (const [color, n] of counts) if (n + wild === 3) {
         ctx.strokeStyle = INKS[color] as string; ctx.globalAlpha = 0.55;
         ctx.beginPath(); ctx.arc(vertX(v), vertY(v), CELL * 0.48, 0, Math.PI * 2); ctx.stroke();
+      }
+    }
+    ctx.restore();
+  }
+  /** The festa: paper bunting across the wall (the arraiais of Santo António) and a warm glow around it. */
+  function festaDecor(s: AzState, now: number): void {
+    if (!engine.festaOn(s.play, nowTick)) return;
+    const left = (s.play.festaUntil - nowTick) / RULES.festaTicks, alpha = Math.min(1, left * 4);
+    ctx.save(); ctx.globalAlpha = alpha;
+    ctx.strokeStyle = `rgba(217,166,46,${(0.45 + 0.25 * Math.sin(now / 120)).toFixed(3)})`; ctx.lineWidth = 6;
+    ctx.strokeRect(GX - 5, GY - 5, COLS * CELL + 10, ROWS * CELL + 10);
+    for (let row = 0; row < 2; row++) {
+      const y0 = GY - 6 + row * 26, n = 14 + row;
+      ctx.strokeStyle = INK; ctx.lineWidth = 1; ctx.beginPath();
+      for (let i = 0; i <= n; i++) { const x = GX - 8 + i * (COLS * CELL + 16) / n, y = y0 + Math.sin(i / n * Math.PI) * 14; if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y); }
+      ctx.stroke();
+      for (let i = 0; i < n; i++) {
+        const x = GX - 8 + (i + 0.5) * (COLS * CELL + 16) / n, y = y0 + Math.sin((i + 0.5) / n * Math.PI) * 14, sway = Math.sin(now / 200 + i) * 3;
+        ctx.fillStyle = INKS[(i + row * 2) % INKS.length] as string;
+        ctx.beginPath(); ctx.moveTo(x - 9, y); ctx.lineTo(x + 9, y); ctx.lineTo(x + sway, y + 18); ctx.closePath(); ctx.fill();
       }
     }
     ctx.restore();
@@ -428,6 +501,7 @@ function createStage(host: HTMLElement, io: StageIO): Stage {
   function wall(s: AzState, now: number): void {
     s.play.tiles.forEach((t, cell) => { if (t.at <= nowTick) tileAt(t, cell, now); });
     hints(s);
+    festaDecor(s, now);
     // ghosts: the tiles of a rosette flip away, a fallen tile drops, a cracked one shatters
     ghosts = ghosts.filter((gh) => now - gh.t0 - gh.delay < 650);
     for (const gh of ghosts) {
@@ -472,6 +546,21 @@ function createStage(host: HTMLElement, io: StageIO): Stage {
       streetSign(ctx, nameOfPanel(panel), x, SIGNS_Y + 4 + drop, 129, 72);
     });
     if (signs.length > 3) text(`+${signs.length - 3}`, W - 6, SIGNS_Y + 84, `500 10px ${F_MONO}`, LABEL, 'right');
+    // tram 28, every 24 s, right to left in 7 s, the painted people at its windows
+    const cycle = (now % 24000) / 7000;
+    if (cycle < 1) {
+      const x = W + 20 - cycle * (W + 260), y = STREET_Y + 20;
+      ctx.strokeStyle = '#2A2927'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(0, y - 18); ctx.lineTo(W, y - 18); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x + 70, y + 2); ctx.lineTo(x + 100, y - 18); ctx.stroke();
+      ctx.fillStyle = '#F2C230'; ctx.fillRect(x, y, 200, 62);
+      ctx.fillStyle = CHALK; ctx.fillRect(x, y + 40, 200, 6);
+      ctx.fillStyle = '#2A2927'; ctx.fillRect(x - 4, y + 60, 208, 6);
+      for (let k = 0; k < 4; k++) { ctx.fillStyle = '#CFE3F2'; ctx.fillRect(x + 12 + k * 46, y + 8, 36, 26); }
+      const riders = signs.slice(-4);
+      riders.forEach((panel, k) => drawPerson(ctx, nameOfPanel(panel), x + 14 + k * 46, y + 8, 30, 0, DIR.DOWN));
+      ctx.fillStyle = INK; ctx.fillRect(x + 4, y + 4, 22, 14); text('28', x + 15, y + 11, `11px ${F_ANTON}`, '#F2C230');
+      ctx.fillStyle = INK; for (const wx of [30, 170]) { ctx.beginPath(); ctx.arc(x + wx, y + 66, 7, 0, Math.PI * 2); ctx.fill(); }
+    }
     const dt = 1 / 60;
     walkers.forEach((wk) => {
       wk.x += wk.dir * wk.speed * dt;
@@ -488,10 +577,11 @@ function createStage(host: HTMLElement, io: StageIO): Stage {
     for (const p of pops) {
       const t = (now - p.t0) / 1100;
       if (t >= 1) continue;
-      const e = p.e, made = e.what === 'rosette' || e.what === 'cascade';
-      const x0 = made ? vertX(e.vertex) : cellX(e.cells[0] ?? 0), y0 = made ? vertY(e.vertex) : cellY(e.cells[0] ?? 0);
+      const e = p.e, made = e.what === 'rosette' || e.what === 'cascade', atVertex = made || e.what === 'festa';
+      const x0 = atVertex ? vertX(e.vertex) : cellX(e.cells[0] ?? 0), y0 = atVertex ? vertY(e.vertex) : cellY(e.cells[0] ?? 0);
       const x = Math.max(44, Math.min(W - 44, x0)), y = y0 - 34 - t * 26;
       ctx.globalAlpha = 1 - Math.max(0, t - 0.7) / 0.3;
+      if (e.what === 'festa') { text(pick(SAYS.festa, `festa:${p.seq}`), x, y - 44, `22px ${F_ANTON}`, GOLD); ctx.globalAlpha = 1; continue; }
       const tagText = e.gain > 0 ? `+${e.gain}` : e.gain < 0 ? `${e.gain}` : 'CRACK';
       text(tagText, x, y, `24px ${F_ANTON}`, e.gain > 0 ? (e.panels.length ? GOLD : INK) : RED);
       if (!made || fnv1a(`s:${p.seq}`) % 2 === 0 || e.what === 'cascade') text(pick(SAYS[e.what], `${e.what}:${p.seq}`), x, y - 22, `500 12px ${F_MONO}`, made ? COBALT : RED);
@@ -527,7 +617,10 @@ function createStage(host: HTMLElement, io: StageIO): Stage {
     text('each tile takes 3 turns · the 4th cracks it', W / 2, 424, `500 13px ${F_MONO}`, INK);
     text('SOS: a loose tile falls unless it joins a rosette', W / 2, 460, `500 13px ${F_MONO}`, RED);
     text('golden tile = a name of the wall: paint it!', W / 2, 484, `500 13px ${F_MONO}`, '#9A7414');
-    text('12 cracks and the wall crumbles · 90 s', W / 2, 520, `500 12px ${F_MONO}`, LABEL);
+    drawSardine(ctx, W / 2 - 150, 500, 30, now);
+    text('sardinha = any colour → FESTA ×2', W / 2 + 18, 515, `500 13px ${F_MONO}`, INK);
+    text('2-3 rosettes in one turn = ×2 ×3', W / 2, 546, `500 13px ${F_MONO}`, INK);
+    text('12 cracks and the wall crumbles · 90 s', W / 2, 576, `500 12px ${F_MONO}`, LABEL);
     const n = Math.ceil(left * TICK_MS / 1000);
     if (n !== lastCount) { lastCount = n; beep([440], 0.05, 'sine'); }
   }
@@ -610,7 +703,8 @@ function createStage(host: HTMLElement, io: StageIO): Stage {
     if (p) {
       // the pattern you made: every rosette closed, in order (the last 40), 8 a row
       const made = p.mosaic.slice(-40);
-      text(`YOUR PATTERN · ${p.made} ROSETTE${p.made === 1 ? '' : 'S'} · ${p.rescued} SAVED`, 60, 452, `500 22px ${F_MONO}`, INK, 'left', g);
+      const head = `YOUR PATTERN · ${p.made} ROSETTE${p.made === 1 ? '' : 'S'} · ${p.rescued} SAVED${p.festas ? ` · ${p.festas} FESTA${p.festas === 1 ? '' : 'S'}` : ''}`;
+      text(head, 60, 452, fitFont(head, 540, 22, F_MONO, g), INK, 'left', g);
       const size = 66;
       g.fillStyle = '#E9E4D8'; g.fillRect(56, 476, 8 * size + 8, 5 * size + 8);
       made.forEach((color, i) => drawRosette(g, color, 60 + (i % 8) * size + size / 2, 480 + Math.floor(i / 8) * size + size / 2, size * 0.46));
@@ -730,7 +824,7 @@ export const wenAzulejoAdapter: GameAdapter = {
   title: 'WEN AZULEJO',
   heading: 'Close the rosettes',
   tagline: 'Lisbon, NFC Summit. Turn the azulejos, close the rosettes, save the loose tiles, paint the names of the wall. 90 seconds.',
-  lede: `A wall of azulejos, each with four coloured corners. Tap a tile to turn it a quarter turn. Where four tiles meet with corners of one colour, the circle closes: a rosette. It scores, and its tiles are relaid with new ones (which may close rosettes by themselves). Each tile takes ${RULES.maxTurns} turns; a fourth that closes nothing cracks it. SOS: now and then a tile comes loose; put it in a rosette before it falls, or the wall cracks. Golden tiles carry a name of the wall: a rosette with one paints the name, for a bonus, and repairs a crack. Twelve cracks and the wall crumbles. New glazes arrive and tiles come loose faster as the clock runs down; rosettes in a row multiply your points. Hold the wall for 90 seconds for a big bonus. One credit per run, scored by the server.`,
+  lede: `A wall of azulejos, each with four coloured corners. Tap a tile to turn it a quarter turn. Where four tiles meet with corners of one colour, the circle closes: a rosette. It scores, and its tiles are relaid with new ones (which may close rosettes by themselves). Each tile takes ${RULES.maxTurns} turns; a fourth that closes nothing cracks it. SOS: now and then a tile comes loose; put it in a rosette before it falls, or the wall cracks. Golden tiles carry a name of the wall: a rosette with one paints the name, for a bonus, and repairs a crack. The sardinha is a joker, any colour: a rosette with it starts the festa, 6 seconds of double points with no tile falling. One turn that closes two or three rosettes multiplies them. Twelve cracks and the wall crumbles. New glazes arrive and tiles come loose faster as the clock runs down; rosettes in a row multiply your points. Hold the wall for 90 seconds for a big bonus. One credit per run, scored by the server.`,
   stateSchema: stateSchema as never,
   snapshotSchema: snapshotSchema as never,
   parseSavedRound: createSavedRoundParser(stateSchema as never, inputSchema as never),

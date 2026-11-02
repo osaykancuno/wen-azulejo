@@ -6,7 +6,7 @@ import { packageGame } from '../scripts/package-game.js';
 import { scoringConfiguration, type Configuration } from '../src/shell/config.js';
 import { WALL_PANELS } from '../src/generated/wall.js';
 import {
-  CELLS, COLORS, COLS, RULES, VCOLS, VERTS, checkState, cornersOf, createEngine, inputSchema, parseInput, stateSchema, turned, verticesOf,
+  CELLS, COLORS, COLS, PLAIN, RULES, SARDINHA, VCOLS, VERTS, checkState, cornersOf, createEngine, inputSchema, parseInput, stateSchema, turned, verticesOf,
   type AzState, type Tile,
 } from '../src/games/wen-azulejo/engine.js';
 import { mulberry32 } from '../src/common/det.js';
@@ -22,7 +22,7 @@ const NEUTRAL = [0, 1, 2, 0];
 /** A run at the opening of the wall with a neutral wall (ids 1-42) changed by `edit`, and no tile coming loose. */
 function scene(edit: (tiles: Tile[]) => void = () => {}, seed = 1): AzState {
   const s = engine.advance(started(seed), OPEN);
-  const tiles = Array.from({ length: CELLS }, (_, i): Tile => ({ id: i + 1, c: NEUTRAL.slice(), panel: 0, turns: 0, loose: 0, at: 0 }));
+  const tiles = Array.from({ length: CELLS }, (_, i): Tile => ({ id: i + 1, c: NEUTRAL.slice(), panel: 0, turns: 0, loose: 0, at: 0, kind: PLAIN }));
   edit(tiles);
   return { ...s, play: { ...s.play, tiles, nextId: 100, nextLoose: 1_000_000 } };
 }
@@ -80,7 +80,7 @@ test('the opening wall: 42 tiles laid, in the first glazes, with no rosette clos
   for (let seed = 0; seed < 200; seed++) {
     const s = engine.createRun(seed, CONFIG);
     assert.equal(s.play.tiles.length, CELLS);
-    assert.ok(s.play.tiles.every((t) => t.at === 0 && t.turns === 0 && t.loose === 0 && t.c.every((x) => x < (RULES.colors[0] as number))));
+    assert.ok(s.play.tiles.every((t) => t.at === 0 && t.turns === 0 && t.loose === 0 && t.kind === PLAIN && t.c.every((x) => x < (RULES.colors[0] as number))));
     for (let v = 0; v < VERTS; v++) assert.equal(engine.closedAt(s.play, v, 0), -1, `seed ${seed}: junction ${v} closed at the start`);
   }
 });
@@ -129,7 +129,7 @@ test('a turn that closes four corners of one colour makes a rosette: points, til
   });
   const after = turn(two, 14, OPEN + 1);
   assert.deepEqual(whats(after), ['rosette', 'rosette']);
-  assert.equal(after.play.score, RULES.rosette * 2); assert.deepEqual(after.play.mosaic, [3, 4]);
+  assert.equal(after.play.score, RULES.rosette * 2 * 2, 'a double: each rosette × 2'); assert.deepEqual(after.play.mosaic, [3, 4]);
 });
 
 test('rosettes in a row multiply (×2 from the 4th), and the streak ends after 3 s without one', () => {
@@ -190,6 +190,62 @@ test('SOS: tiles come loose from the opening on, more and more often, with less 
     assert.ok(names.every((n) => !run.play.painted.includes(n)));
   }
   assert.ok(loose > 40, `${loose} tiles came loose`); assert.ok(maxNames <= RULES.namesMax);
+});
+
+test('the sardinha is a joker: any colour at a junction; it does not turn', () => {
+  let cellT = -1;
+  let s = scene((t) => {
+    cellT = almost(t, 6, 3);
+    const [x] = cornersOf(6)[0] as [number, number];
+    t[x] = { ...(t[x] as Tile), c: [0, 0, 0, 0], kind: SARDINHA };          // the top-left tile of junction 6: a sardinha
+  });
+  const sardine = cornersOf(6)[0]![0];
+  assert.deepEqual(turn(s, sardine, OPEN + 1).play.tiles[sardine], s.play.tiles[sardine], 'tapping the sardinha does nothing');
+  s = turn(s, cellT, OPEN + 1);
+  assert.deepEqual(whats(s), ['festa', 'rosette']);
+  assert.equal(s.play.events[1]?.color, 3, 'the rosette takes the colour of the other three corners');
+});
+
+test('the festa: a rosette with the sardinha doubles the points for 6 s, and no tile comes loose or falls meanwhile', () => {
+  const junctions = [0, 2, 4, 10];
+  const turners: number[] = [];
+  let s = scene((t) => {
+    for (const v of junctions) turners.push(almost(t, v, 3));
+    const [x] = cornersOf(0)[0] as [number, number];
+    t[x] = { ...(t[x] as Tile), c: [0, 0, 0, 0], kind: SARDINHA };
+    t[30]!.loose = OPEN + 20;                                                // loose: it would fall at OPEN + 20
+  });
+  s = { ...s, play: { ...s.play, nextLoose: OPEN + 30 } };
+  s = turn(s, turners[0] as number, OPEN + 1);
+  assert.deepEqual(whats(s), ['festa', 'rosette']);
+  assert.equal(s.play.festaUntil, OPEN + 1 + RULES.festaTicks); assert.equal(s.play.festas, 1);
+  assert.equal(s.play.score, RULES.rosette * RULES.festaMult, 'the rosette that starts it counts double');
+  assert.equal(s.play.tiles[30]?.loose, OPEN + 20 + RULES.festaTicks, 'the loose tile waits for the festa to end');
+  assert.equal(s.play.nextLoose, OPEN + 30 + RULES.festaTicks);
+  const before = s.play.score;
+  s = turn(s, turners[1] as number, OPEN + 10);
+  assert.equal(s.play.score - before, RULES.rosette * RULES.festaMult);
+  s = engine.advance(s, OPEN + 1 + RULES.festaTicks - 1);
+  assert.equal(s.play.fallen, 0); assert.ok(s.play.tiles.filter((t) => t.loose > 0).length <= 1, 'nothing new comes loose');
+  const after = turn(s, turners[2] as number, OPEN + 1 + RULES.festaTicks + 5);
+  assert.equal(after.play.events.at(-1)?.gain, RULES.rosette * engine.multOf(2), 'over: back to single points (×2 is the streak)');
+});
+
+test('sardinhas: never on the opening wall, one on the wall at most', () => {
+  let seen = 0;
+  for (let seed = 1; seed <= 12; seed++) {
+    let run = started(seed);
+    assert.ok(run.play.tiles.every((t) => t.kind === PLAIN));
+    for (let t = OPEN; t < CONFIG.roundTicks; t += 3) {
+      run = engine.advance({ ...run, play: { ...run.play, cracks: 0 } }, t);
+      const tap = bestTap(run);
+      if (tap) run = engine.applyInput(run, { action: 'turn', ...tap }, t);
+      const n = run.play.tiles.filter((x) => x.kind === SARDINHA);
+      assert.ok(n.length <= RULES.sardineMax);
+      seen += n.length;
+    }
+  }
+  assert.ok(seen > 0, 'sardinhas do come');
 });
 
 test('a cascade: a new tile laid into place closes a rosette by itself, and counts', () => {
@@ -273,6 +329,9 @@ test('checkState and the page schema refuse incoherent or tampered states (and a
     mutate((x) => { x.play.painted = [3, 3]; }), mutate((x) => { x.play.mosaic = [COLORS.length]; }), mutate((x) => { x.play.lastMade = x.tick + 1; }),
     mutate((x) => { x.play.events = [{ seq: 1, tick: 0, what: 'rosette', color: 0, vertex: 0, cells: [0, 1, 6, 7], panels: [], gain: 1, extra: 1 }]; x.play.eventSeq = 1; }),
     mutate((x) => { x.play.events = [{ seq: 1, tick: 0, what: 'rosette', color: 0, vertex: VERTS, cells: [0, 1, 6, 7], panels: [], gain: 1 }]; x.play.eventSeq = 1; }),
+    mutate((x) => { x.play.tiles[0].kind = 2; }), mutate((x) => { x.play.tiles[0].kind = SARDINHA; x.play.tiles[0].panel = 9; }),
+    mutate((x) => { x.play.tiles[0].kind = SARDINHA; x.play.tiles[1].kind = SARDINHA; }),
+    mutate((x) => { x.play.festaUntil = x.tick + RULES.festaTicks + 1; }), mutate((x) => { delete x.play.festas; }),
   ];
   bad.forEach((state, i) => {
     assert.throws(() => checkState(state), Error, `case ${i}`);
@@ -282,7 +341,7 @@ test('checkState and the page schema refuse incoherent or tampered states (and a
 
 /* ------------------------------------- bot ------------------------------------- */
 /** Turns to bring glaze `color` to corner k of tile t, or 99. */
-const turnsTo = (t: Tile, k: number, color: number): number => { for (let r = 0; r < 4; r++) if (t.c[(k + 4 - r) % 4] === color) return r; return 99; };
+const turnsTo = (t: Tile, k: number, color: number): number => { if (t.kind === SARDINHA) return 0; for (let r = 0; r < 4; r++) if (t.c[(k + 4 - r) % 4] === color) return r; return 99; };
 /** The next tap of a player who sees the whole wall: the cheapest rosette in turns, loose and golden tiles first. */
 function bestTap(s: AzState): { cell: number; id: number } | null {
   let best: { cost: number; cell: number; id: number } | null = null;

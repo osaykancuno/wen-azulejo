@@ -12,6 +12,9 @@ Dove quattro piastrelle si incontrano e i loro quattro angoli hanno lo stesso co
 | Rotazioni | ogni piastrella regge 3 rotazioni; una 4ª che non chiude niente la crepa: −30 e una crepa |
 | SOS Azulejo | ogni tanto una piastrella si stacca e trema: mettila in una rosetta prima che cada (+50), altrimenti cade: −30 e una crepa |
 | Piastrella dorata | porta un nome del muro: una rosetta che la include DIPINGE il nome (+200, ripara una crepa). Ogni nome una volta per partita, al massimo 3 sul muro |
+| Sardinha | la sardina della festa di Santo António: un jolly, vale qualunque colore in un incrocio (non ruota). Una rosetta con la sardinha fa partire la **festa** |
+| Festa | 6 s di punti doppi in cui nessuna piastrella si stacca o cade; festoni di carta sul muro |
+| Doppia, tripla | una rotazione che chiude due o tre rosette insieme le moltiplica per due o per tre |
 | Crepe | 12 e il muro crolla: fine, niente bonus |
 | Sopravvivenza | muro in piedi per 90 s: +2000 e +150 per ogni crepa rimasta |
 
@@ -19,6 +22,8 @@ Dove quattro piastrelle si incontrano e i loro quattro angoli hanno lo stesso co
   stacca ogni 2,4–3,6 s all'inizio e ogni 0,7–1 s alla fine, e resiste 7,5 s all'inizio e 3,3 s alla fine (SOS
   nell'HUD). Ogni 22,5 s il muro si complica: le piastrelle nuove hanno 3 smalti, poi 4 (MANGANÊS), 4, poi 5
   (TERRACOTA). Il muro iniziale non ha rosette già chiuse.
+- Solo grafica: il punteggio che sale, i suoni che salgono con la serie, la vibrazione sul telefono, il tram 28 che
+  passa con i nomi dipinti ai finestrini.
 - Il punteggio non scende mai sotto zero. Ogni smalto ha anche un suo segno (punto, rombo, foglia, anello, triangolo):
   il colore non è mai l'unico indizio. Un cerchio tratteggiato segna un incrocio a cui manca un solo angolo.
 - I nomi dipinti diventano targhe di strada di Lisbona (RUA …) e le loro persone camminano sulla calçada sotto il muro
@@ -27,8 +32,8 @@ Dove quattro piastrelle si incontrano e i loro quattro angoli hanno lo stesso co
   settimana, il record, le piastrelle salvate e i nomi dipinti; POST ON X li tagga.
 
 Pratica gratuita con le stesse regole nel browser, niente registrato. Calibrazione (giocatore simulato che vede tutto il
-muro, 30 partite): con un tocco ogni 0,2 s tiene il muro 29 volte su 30, ogni 0,35 s 26 su 30, ogni 0,55 s 2 su 30,
-ogni 0,8 s mai; chi non fa niente crolla in circa 38 s. Un giocatore vero, che deve cercare le rosette con gli occhi,
+muro, 30 partite): con un tocco ogni 0,2 s tiene il muro 30 volte su 30, ogni 0,35 s 27 su 30, ogni 0,55 s 5 su 30,
+ogni 0,8 s mai; da 0 a 3 feste a partita; chi non fa niente crolla in circa 38 s. Un giocatore vero, che deve cercare le rosette con gli occhi,
 sta più in basso di questa scala.
 
 ## Pubblicare da Windows
